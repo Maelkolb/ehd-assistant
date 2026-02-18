@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+data/vectordb/
+data/processed/embeddings.npy
+*.tar.gz
+.venv/

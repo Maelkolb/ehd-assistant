@@ -1,0 +1,30 @@
+# === Core ===
+lxml>=4.9.0
+pydantic>=2.0.0
+
+# === API ===
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# === Vector Store (pick one) ===
+chromadb>=0.4.0
+# qdrant-client>=1.7.0      # Uncomment for production
+
+# === Search ===
+rank-bm25>=0.2.2
+
+# === Embeddings (pick one) ===
+# sentence-transformers>=2.2.0  # Local embeddings (recommended)
+# openai>=1.0.0                  # OpenAI embeddings
+numpy>=1.24.0
+
+# === LLM (pick one) ===
+anthropic>=0.39.0              # Claude API
+# openai>=1.0.0                # GPT-4
+
+# === Knowledge Graph (optional) ===
+# neo4j>=5.0.0
+
+# === Dev ===
+pytest>=7.0.0
+httpx>=0.25.0                  # For FastAPI testing
