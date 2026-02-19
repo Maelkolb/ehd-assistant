@@ -109,9 +109,24 @@ async def lifespan(app: FastAPI):
         generator = AnswerGenerator(provider="openai", model="gpt-4o", api_key=openai_key)
         logger.info("Using OpenAI GPT-4o for generation")
     else:
-        generator = MockGenerator()
-        logger.warning("No LLM API key found. Using mock generator.")
-        logger.warning("Set ANTHROPIC_API_KEY or OPENAI_API_KEY to enable real generation.")
+        # Try Gemini via Vertex AI
+        gcp_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+        if gcp_project:
+            try:
+                from src.generation.gemini_backend import GeminiGenerator
+                generator = GeminiGenerator(
+                    model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
+                    project_id=gcp_project,
+                    use_vertex=True,
+                )
+                logger.info("Using Gemini via Vertex AI for generation")
+            except Exception as e:
+                logger.warning(f"Gemini init failed: {e}")
+                generator = MockGenerator()
+        else:
+            generator = MockGenerator()
+            logger.warning("No LLM API key found. Using mock generator.")
+
 
     logger.info(f"System ready. {len(pipeline.chunk_store)} chunks loaded.")
 
@@ -151,9 +166,11 @@ class ChatRequest(BaseModel):
     use_bm25: bool = Field(default=True, description="Use keyword search")
 
 class Source(BaseModel):
+    index: int
     citation_label: str
     url: str
     score: float
+    doc_type: str = ""
     text_preview: str = ""
 
 class ChatResponse(BaseModel):
@@ -185,41 +202,81 @@ class SearchResponse(BaseModel):
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """Main chat endpoint — retrieve context and generate answer."""
+    """Main chat endpoint with multi-query retrieval."""
     if retriever is None or generator is None:
         raise HTTPException(500, "System not initialized")
 
-    # Retrieve
-    results = retriever.retrieve(
-        query=request.query,
-        top_k=request.top_k,
-        use_vector=request.use_vector,
-        use_bm25=request.use_bm25,
-    )
+    # Stage 1: Query expansion (if generator supports it)
+    if hasattr(generator, 'expand_query'):
+        queries = generator.expand_query(request.query)
+    else:
+        queries = [request.query]
 
-    # Generate
+    # Stage 2: Multi-query retrieval + deduplication
+    all_results = {}
+    per_query_k = max(5, request.top_k // len(queries) + 2)
+    for q in queries:
+        results = retriever.retrieve(
+            query=q,
+            top_k=per_query_k,
+            use_vector=request.use_vector,
+            use_bm25=request.use_bm25,
+        )
+        for r in results:
+            if r.chunk_id not in all_results or r.fused_score > all_results[r.chunk_id].fused_score:
+                all_results[r.chunk_id] = r
+
+    # Sort by fused score, take top results
+    results = sorted(all_results.values(), key=lambda r: r.fused_score, reverse=True)
+    results = results[:request.top_k + 4]  # Extra for reranking to filter
+
+    # Stage 3+4: Generate (includes reranking inside generator)
     answer = generator.generate(
         query=request.query,
         retrieval_results=results,
     )
 
     # Format response
+    if isinstance(answer, dict):
+        answer_text = answer.get("answer", "")
+        answer_model = "gemini-2.0-flash"
+        # Use sources from generator (post-reranking)
+        gen_sources = answer.get("sources", [])
+    else:
+        answer_text = answer.text
+        answer_model = getattr(answer, "model", "unknown")
+        gen_sources = []
+
     sources = []
-    for r in results:
-        sources.append(Source(
-            citation_label=r.citation_label,
-            url=r.url,
-            score=round(r.fused_score, 4),
-            text_preview=r.text[:200] if r.text else "",
-        ))
+    if gen_sources:
+        # Use the generator's source list (already reranked)
+        for s in gen_sources:
+            sources.append(Source(
+                index=s.get("index", 0),
+                citation_label=s.get("citation_label", ""),
+                url=s.get("url", ""),
+                score=0.0,
+                doc_type=s.get("doc_type", ""),
+                text_preview="",
+            ))
+    else:
+        # Fallback: build from retrieval results
+        for i, r in enumerate(results):
+            sources.append(Source(
+                index=i + 1,
+                citation_label=r.citation_label or r.chunk_id,
+                url=r.url or "",
+                score=round(r.fused_score, 4),
+                doc_type=r.metadata.get("doc_type", "") if hasattr(r, "metadata") else "",
+                text_preview=r.text[:200] if r.text else "",
+            ))
 
     return ChatResponse(
-        answer=answer.text,
+        answer=answer_text,
         sources=sources,
-        model=answer.model,
+        model=answer_model,
         chunks_retrieved=len(results),
     )
-
 
 @app.post("/search", response_model=SearchResponse)
 async def search(request: SearchRequest):
@@ -289,3 +346,12 @@ async def stats():
         },
         "vector_count": pipeline.vector_store.count(),
     }
+
+# --- Static file serving (appended fix) ---
+from fastapi.responses import FileResponse
+from pathlib import Path as _P
+_static = _P(__file__).parent.parent.parent / "static"
+if _static.exists():
+    @app.get("/")
+    async def _serve_index():
+        return FileResponse(_static / "index.html")

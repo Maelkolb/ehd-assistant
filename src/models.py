@@ -205,8 +205,8 @@ class HumboldtChunk:
 
     @classmethod
     def from_dict(cls, d: dict) -> "HumboldtChunk":
-        persons = [Entity(**p) if isinstance(p, dict) else p for p in d.get("persons", [])]
-        places = [Entity(**p) if isinstance(p, dict) else p for p in d.get("places", [])]
+        persons = [Entity(name=p.get("name",""), entity_type=p.get("type","person"), humboldt_id=p.get("humboldt_id",""), gnd_id=p.get("gnd",""), geonames_id=p.get("geonames",""), viaf_id=p.get("viaf",""), lat=p.get("lat"), lon=p.get("lon")) if isinstance(p, dict) else p for p in d.get("persons", [])]
+        places = [Entity(name=p.get("name",""), entity_type=p.get("type","place"), humboldt_id=p.get("humboldt_id",""), gnd_id=p.get("gnd",""), geonames_id=p.get("geonames",""), viaf_id=p.get("viaf",""), lat=p.get("lat"), lon=p.get("lon")) if isinstance(p, dict) else p for p in d.get("places", [])]
         measurements = [Measurement(**m) if isinstance(m, dict) else m for m in d.get("measurements", [])]
         return cls(
             chunk_id=d.get("chunk_id", ""),
