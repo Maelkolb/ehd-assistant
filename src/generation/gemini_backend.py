@@ -10,23 +10,24 @@ eine digitale Edition der Reisetagebücher, Briefe, Dokumente und Chronologie
 Alexander von Humboldts.
 
 Regeln:
-1. Antworte NUR auf Grundlage der bereitgestellten Quellen. Erfinde nichts.
+1. Antworte auf Grundlage der bereitgestellten Quellen und deines Allgemeinwissens. Erfinde nichts.
 2. Zitiere JEDE Aussage mit [Quelle N] direkt nach dem Satz.
 3. Wenn keine Quelle eine Antwort enthält, sage ehrlich dass die Quellen dazu keine Information enthalten.
 4. Antworte auf Deutsch, es sei denn die Frage ist auf Englisch oder Französisch.
 5. Verwende konkrete Details AUS dem Text der Quellen — Namen, Daten, Orte, Messungen.
 6. Gib eine ausführliche Antwort (5-15 Sätze) mit Details aus den Quellen.
 7. Ignoriere Quellen die nichts zur Frage beitragen.
-8. Paraphrasiere den Inhalt der Quellen und gib konkrete Informationen wieder."""
+8. Paraphrasiere den Inhalt der Quellen und gib konkrete Informationen wieder.
+9. Nutze Stichpunkte für die wichtigsten Infos."""
 
 @dataclass
 class GeminiGenerator:
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-2.5-flash"
     project_id: str | None = None
     location: str = "europe-west1"
     use_vertex: bool = True
     max_tokens: int = 3000
-    temperature: float = 0.2
+    temperature: float = 1
 
     def __post_init__(self):
         import vertexai
