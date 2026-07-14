@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Humboldt RAG — Forschungsassistent</title>
+<title>Humboldt — Forschungsassistent</title>
 <style>
 :root{--primary:#2c5530;--bg:#fafaf8;--text:#2a2a2a;--border:#ddd}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -20,6 +20,15 @@ header .sub{font-size:.85rem;opacity:.8;font-style:italic}
 .src-ref{color:var(--primary);font-weight:600;font-size:.85em}
 .sources{margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--border);font-size:.85rem;color:#666}
 .sources a{color:var(--primary)}
+.trace{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;color:#555;line-height:1.9}
+.trace .tl{display:block}
+.trace .tool{color:var(--primary);font-weight:600}
+.trace .args{color:#777}
+.trace .res{color:#997a00}
+.trace .pending::after{content:'…';animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.2}}
+details.trace-box{margin-bottom:.75rem;padding:.5rem .75rem;background:#f4f6f4;border:1px solid #e0e6e0;border-radius:.5rem}
+details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-family:ui-monospace,Menlo,Consolas,monospace}
 .typing span{width:6px;height:6px;background:#666;border-radius:50%;display:inline-block;animation:t 1.4s infinite}
 .typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}
 @keyframes t{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-4px);opacity:1}}
@@ -53,14 +62,69 @@ header .sub{font-size:.85rem;opacity:.8;font-style:italic}
 </div></div>
 <script>
 const API=window.location.origin,chat=document.getElementById('chat'),q=document.getElementById('q'),btn=document.getElementById('btn'),wel=document.getElementById('welcome');
+const TOOL_LABEL={lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext'};
 function ask(b){q.value=b.textContent;send()}
-async function send(){const t=q.value.trim();if(!t)return;if(wel)wel.style.display='none';add('user',t);q.value='';btn.disabled=true;
-const ty=document.createElement('div');ty.className='msg bot';ty.innerHTML='<div class="b typing"><span></span><span></span><span></span></div>';chat.appendChild(ty);chat.scrollTop=1e6;
-try{const r=await fetch(API+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:t,top_k:8})});const d=await r.json();ty.remove();
-let a=(d.answer||'Keine Antwort.').replace(/\[Quelle\s+(\d+)\]/g,'<span class="src-ref">[Quelle $1]</span>');
-let s='';if(d.sources&&d.sources.length){s='<div class="sources"><b>Quellen:</b><br>';d.sources.forEach(x=>{const l=x.citation_label||'Quelle '+x.index;s+=`[${x.index}] ${x.url?'<a href="'+x.url+'" target="_blank">'+l+'</a>':l}<br>`});s+='</div>'}
-add('bot',a+s)}catch(e){ty.remove();add('bot','Fehler: '+e.message)}btn.disabled=false;q.focus()}
-function add(r,h){const d=document.createElement('div');d.className='msg '+r;d.innerHTML='<div class="b">'+(r==='user'?esc(h):h)+'</div>';chat.appendChild(d);chat.scrollTop=1e6}
 function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+function add(r,h){const d=document.createElement('div');d.className='msg '+r;d.innerHTML='<div class="b">'+(r==='user'?esc(h):h)+'</div>';chat.appendChild(d);chat.scrollTop=1e6;return d}
+function argSummary(tool,inp){
+  if(!inp)return'';
+  if(tool==='search'){let s='„'+(inp.query||'')+'“';if(inp.doc_types)s+=' ['+inp.doc_types.join(',')+']';if(inp.date_from||inp.date_to)s+=' '+(inp.date_from||'')+'–'+(inp.date_to||'');return s}
+  if(tool==='grep')return'/'+(inp.pattern||'')+'/';
+  if(tool==='lookup_entity')return'„'+(inp.name||'')+'“'+(inp.entity_type?' ('+inp.entity_type+')':'');
+  if(tool==='chunks_for_entity')return inp.humboldt_id||'';
+  if(tool==='get_context')return inp.chunk_id||'';
+  return JSON.stringify(inp)}
+async function send(){
+  const t=q.value.trim();if(!t)return;if(wel)wel.style.display='none';
+  add('user',t);q.value='';btn.disabled=true;
+  const bot=add('bot','');const bubble=bot.querySelector('.b');
+  const traceEl=document.createElement('div');traceEl.className='trace';bubble.appendChild(traceEl);
+  const think=document.createElement('div');think.className='typing';think.innerHTML='<span></span><span></span><span></span>';bubble.appendChild(think);
+  let pendingLine=null;
+  try{
+    const r=await fetch(API+'/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:t})});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
+    while(true){
+      const {done,value}=await reader.read();if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let i;while((i=buf.indexOf('\n\n'))>=0){
+        const raw=buf.slice(0,i);buf=buf.slice(i+2);
+        if(!raw.startsWith('data: '))continue;
+        handle(JSON.parse(raw.slice(6)));
+      }
+    }
+  }catch(e){bubble.innerHTML='Fehler: '+esc(e.message)}
+  btn.disabled=false;q.focus();
+
+  function handle(ev){
+    if(ev.type==='tool_call'){
+      pendingLine=document.createElement('span');pendingLine.className='tl pending';
+      pendingLine.innerHTML='<span class="tool">'+(TOOL_LABEL[ev.tool]||ev.tool)+'</span> <span class="args">'+esc(argSummary(ev.tool,ev.input))+'</span>';
+      traceEl.appendChild(pendingLine);chat.scrollTop=1e6;
+    }else if(ev.type==='tool_result'){
+      if(pendingLine){pendingLine.classList.remove('pending');
+        const res=document.createElement('span');res.className='res';
+        res.textContent=' → '+ev.n+' Treffer'+(ev.preview&&ev.preview.length?': '+ev.preview.slice(0,2).join(' · '):'');
+        pendingLine.appendChild(res);pendingLine=null}
+      chat.scrollTop=1e6;
+    }else if(ev.type==='answer'){
+      const d=ev.data;think.remove();
+      let a=(d.answer||'Keine Antwort.').replace(/\[Quelle[n]?\s+([\d,\s und]+)\]/g,'<span class="src-ref">[Quelle $1]</span>');
+      a=a.replace(/^### (.*)$/gm,'<b>$1</b>').replace(/^## (.*)$/gm,'<b>$1</b>').replace(/^# (.*)$/gm,'<b>$1</b>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+      let s='';
+      if(d.sources&&d.sources.length){s='<div class="sources"><b>Quellen:</b><br>';d.sources.forEach(x=>{const l=x.citation_label||'Quelle '+x.index;s+=`[${x.index}] ${x.url?'<a href="'+x.url+'" target="_blank">'+esc(l)+'</a>':esc(l)}<br>`});s+='</div>'}
+      const steps=traceEl.childNodes.length;
+      const box=document.createElement('details');box.className='trace-box';
+      box.innerHTML='<summary>🔎 Recherche-Schritte ('+steps+') · '+(d.elapsed_s||'?')+'s</summary>';
+      box.appendChild(traceEl);
+      bubble.innerHTML='';bubble.appendChild(box);
+      const ans=document.createElement('div');ans.innerHTML=a+s;bubble.appendChild(ans);
+      chat.scrollTop=1e6;
+    }else if(ev.type==='error'){
+      think.remove();bubble.innerHTML='Fehler: '+esc(ev.message);
+    }
+  }
+}
 </script>
 </body></html>

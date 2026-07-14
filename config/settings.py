@@ -1,5 +1,5 @@
 """
-Configuration for the Humboldt RAG system.
+Configuration for the Humboldt retrieval system.
 
 All settings can be overridden via environment variables.
 """
@@ -11,27 +11,20 @@ from dataclasses import dataclass
 class Config:
     # === Paths ===
     data_dir: str = os.environ.get("DATA_DIR", "data")
-    raw_dir: str = os.environ.get("RAW_DIR", "data/raw")
-
-    # === Embedding ===
-    embedding_backend: str = os.environ.get("EMBEDDING_BACKEND", "mock")  # "mock", "sentence-transformers", "openai"
-    embedding_model: str = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-large-instruct")
-    embedding_dim: int = int(os.environ.get("EMBEDDING_DIM", "384"))
-
-    # === Vector Store ===
-    vector_store: str = os.environ.get("VECTOR_STORE", "chroma")  # "chroma" or "qdrant"
-    qdrant_url: str = os.environ.get("QDRANT_URL", "http://localhost:6333")
+    corpus_dir: str = os.environ.get("CORPUS_DIR", "data/edh-source/data")
 
     # === LLM ===
-    llm_provider: str = os.environ.get("LLM_PROVIDER", "anthropic")  # "anthropic" or "openai"
-    llm_model: str = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")
+    llm_provider: str = os.environ.get("LLM_PROVIDER", "anthropic")  # "anthropic", "openai", or "gemini"
+    llm_model: str = os.environ.get("LLM_MODEL", "claude-sonnet-5")
+    # Gemini model is env-only on purpose: hardcoded defaults rotted twice
+    # (gemini-2.0-flash retired 2026-06-01, gemini-2.5-flash retires 2026-10-16).
+    gemini_model: str = os.environ.get("GEMINI_MODEL", "")
     anthropic_api_key: str = os.environ.get("ANTHROPIC_API_KEY", "")
     openai_api_key: str = os.environ.get("OPENAI_API_KEY", "")
 
     # === Retrieval ===
+    retrieval_mode: str = os.environ.get("RETRIEVAL_MODE", "agentic")  # "agentic" or "oneshot"
     retrieval_top_k: int = int(os.environ.get("RETRIEVAL_TOP_K", "8"))
-    vector_weight: float = float(os.environ.get("VECTOR_WEIGHT", "0.4"))
-    bm25_weight: float = float(os.environ.get("BM25_WEIGHT", "0.35"))
 
     # === Chunking ===
     max_chunk_chars: int = int(os.environ.get("MAX_CHUNK_CHARS", "1500"))
@@ -40,7 +33,7 @@ class Config:
     # === API ===
     api_host: str = os.environ.get("API_HOST", "0.0.0.0")
     api_port: int = int(os.environ.get("API_PORT", "8000"))
-    cors_origins: list[str] = None  # Set in production
+    cors_origins: list[str] = None  # parsed from CORS_ORIGINS
 
     def __post_init__(self):
         if self.cors_origins is None:

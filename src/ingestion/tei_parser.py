@@ -44,7 +44,9 @@ class TEIParser:
         filepath = Path(filepath)
         logger.info(f"Parsing {filepath.name}")
 
-        tree = etree.parse(str(filepath))
+        # collect_ids=False: some edition files reuse xml:id values, which
+        # lxml would otherwise reject as duplicate IDs.
+        tree = etree.parse(str(filepath), etree.XMLParser(collect_ids=False))
         root = tree.getroot()
 
         # Extract document-level metadata
@@ -108,9 +110,16 @@ class TEIParser:
         else:
             meta["doc_title"] = ""
 
-        # URL
+        # URL — the v11 dump's URLWeb is only the version root
+        # (https://edition-humboldt.de/v11/); the document ID must be appended
+        # to get a resolvable permalink (…/v11/H0002922[/folio]).
         url_web = root.find(".//tei:idno[@type='URLWeb']", NS)
-        meta["url_base"] = (url_web.text or "").strip() if url_web is not None else ""
+        base = (url_web.text or "").strip().rstrip("/") if url_web is not None else ""
+        doc_id = meta["doc_id"]
+        if base and doc_id and doc_id != "unknown" and not base.endswith(doc_id):
+            meta["url_base"] = f"{base}/{doc_id}"
+        else:
+            meta["url_base"] = base
 
         url_xml = root.find(".//tei:idno[@type='URLXML']", NS)
         meta["url_xml"] = (url_xml.text or "").strip() if url_xml is not None else ""
@@ -507,15 +516,11 @@ class TEIParser:
         if tag in ("del", "fw", "metamark"):
             return
 
-        # === <note>: only include editorial notes in regularized mode ===
+        # === <note>: never inline into running text ===
+        # Editorial notes are extracted separately (_extract_editorial_notes) and
+        # indexed as their own retrievable units, so Humboldt's text stays clean
+        # and the editorial voice stays attributable.
         if tag == "note":
-            note_type = node.get("type", "")
-            if note_type == "editorial" and mode == "regularized":
-                parts.append("[Anm.: ")
-                for child in node:
-                    self._walk_text(child, parts, mode)
-                parts.append("]")
-            # Skip author notes, auxCalc, etc. in running text
             return
 
         # === <supplied>: include with brackets ===

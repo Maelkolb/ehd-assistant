@@ -17,40 +17,34 @@ usage() {
     echo ""
     echo "Commands:"
     echo "  setup       Install dependencies"
-    echo "  ingest      Ingest all XML files from data/raw/"
-    echo "  ingest-real Ingest with real embeddings (requires GPU or patience)"
+    echo "  fetch       Download the TEI corpus (pinned tag) into data/edh-source/"
+    echo "  ingest      Ingest the corpus into lexical indexes"
     echo "  serve       Start the API server"
     echo "  docker      Start everything with Docker Compose"
     echo "  test        Run pipeline test"
     echo ""
     echo "Quick start:"
-    echo "  1. Put your XML files in data/raw/"
-    echo "  2. Set ANTHROPIC_API_KEY in your environment"
-    echo "  3. ./run.sh setup"
-    echo "  4. ./run.sh ingest"
-    echo "  5. ./run.sh serve"
+    echo "  1. Set ANTHROPIC_API_KEY in your environment"
+    echo "  2. ./run.sh setup && ./run.sh fetch && ./run.sh ingest"
+    echo "  3. ./run.sh serve"
 }
 
 cmd_setup() {
     echo -e "${GREEN}Installing dependencies...${NC}"
     pip install -r requirements.txt
-    mkdir -p data/raw data/processed data/vectordb
+    mkdir -p data/processed
     echo -e "${GREEN}✓ Setup complete${NC}"
     echo ""
-    echo "Next steps:"
-    echo "  1. Put Humboldt TEI-XML files in data/raw/"
-    echo "  2. Run: ./run.sh ingest"
+    echo "Next: ./run.sh fetch && ./run.sh ingest"
+}
+
+cmd_fetch() {
+    ./scripts/fetch_corpus.sh
 }
 
 cmd_ingest() {
-    echo -e "${GREEN}Ingesting XML files from data/raw/...${NC}"
-    PYTHONPATH=. python -m src.ingestion.ingest data/raw/
-    echo -e "${GREEN}✓ Ingestion complete${NC}"
-}
-
-cmd_ingest_real() {
-    echo -e "${YELLOW}Ingesting with real embeddings (this may take a while)...${NC}"
-    PYTHONPATH=. python -m src.ingestion.ingest data/raw/ --embeddings real
+    echo -e "${GREEN}Ingesting corpus from data/edh-source/data ...${NC}"
+    PYTHONPATH=. python -m src.ingestion.ingest data/edh-source/data
     echo -e "${GREEN}✓ Ingestion complete${NC}"
 }
 
@@ -74,8 +68,8 @@ cmd_test() {
 # Main
 case "${1:-}" in
     setup)       cmd_setup ;;
+    fetch)       cmd_fetch ;;
     ingest)      cmd_ingest ;;
-    ingest-real) cmd_ingest_real ;;
     serve)       cmd_serve ;;
     docker)      cmd_docker ;;
     test)        cmd_test ;;

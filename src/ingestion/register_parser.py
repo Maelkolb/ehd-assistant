@@ -26,6 +26,15 @@ NS = {"tei": "http://www.tei-c.org/ns/1.0"}
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 
 
+def _entry_url(base_url: str, xml_id: str) -> str:
+    """Resolvable permalink: the dump's URLWeb is only the version root,
+    the entry's xml:id must be appended (…/v11/H0003476)."""
+    base = (base_url or "").rstrip("/")
+    if base and xml_id and not base.endswith(xml_id):
+        return f"{base}/{xml_id}"
+    return base
+
+
 class RegisterParser:
     """
     Parses register/index XML files into HumboldtChunks.
@@ -56,9 +65,13 @@ class RegisterParser:
         logger.info(f"Extracted {len(chunks)} {register_type} chunks")
         return chunks
 
+    # The edition's register files reuse the same xml:id on the TEI root and
+    # the entry element; lxml rejects duplicate IDs unless collect_ids=False.
+    _XML_PARSER = etree.XMLParser(collect_ids=False)
+
     def parse_file(self, filepath: Path, register_type: str) -> list[HumboldtChunk]:
         """Parse a single register XML file."""
-        tree = etree.parse(str(filepath))
+        tree = etree.parse(str(filepath), self._XML_PARSER)
         root = tree.getroot()
 
         # Extract common metadata
@@ -157,7 +170,7 @@ class RegisterParser:
                 doc_id=xml_id,
                 doc_title=f"Personenregister: {display_name}",
                 doc_type="register_person",
-                url=url,
+                url=_entry_url(url, xml_id),
                 text_regularized=text,
                 text_plain=text.lower(),
                 persons=[Entity(
@@ -231,7 +244,7 @@ class RegisterParser:
                 doc_id=xml_id,
                 doc_title=f"Ortsregister: {name}",
                 doc_type="register_place",
-                url=url,
+                url=_entry_url(url, xml_id),
                 text_regularized=text,
                 text_plain=text.lower(),
                 places=[Entity(
@@ -281,7 +294,7 @@ class RegisterParser:
                 doc_id=xml_id,
                 doc_title=f"Institutionenregister: {name}",
                 doc_type="register_institution",
-                url=url,
+                url=_entry_url(url, xml_id),
                 text_regularized=text,
                 text_plain=text.lower(),
             ))
@@ -350,7 +363,7 @@ class RegisterParser:
                 doc_id=xml_id,
                 doc_title=f"Glossar: {term}",
                 doc_type="register_glossary",
-                url=url,
+                url=_entry_url(url, xml_id),
                 text_regularized=text,
                 text_plain=text.lower(),
             ))

@@ -49,6 +49,7 @@ class BM25Index:
                 "text": chunk.text_regularized,
                 "metadata": {
                     "doc_id": chunk.doc_id,
+                    "doc_type": chunk.doc_type,
                     "folio_start": chunk.folio_start,
                     "entry_number": chunk.entry_number,
                     "date_iso": chunk.date_iso,
@@ -62,30 +63,62 @@ class BM25Index:
         self.bm25 = BM25Okapi(self._tokenized_corpus)
         logger.info(f"Built BM25 index with {len(self.documents)} documents")
 
-    def search(self, query: str, top_k: int = 10) -> list[dict]:
-        """Search the BM25 index."""
+    def search(self, query: str, top_k: int = 10, filters: dict | None = None) -> list[dict]:
+        """
+        Search the BM25 index.
+
+        filters: optional dict with any of
+            doc_types: list[str]   — restrict to these doc_type values
+            date_from: str (ISO)   — chunks dated on/after (prefix comparison)
+            date_to:   str (ISO)   — chunks dated on/before
+        Undated chunks are excluded when a date filter is active.
+        """
         if self.bm25 is None:
             return []
 
         tokens = self._tokenize(query)
         scores = self.bm25.get_scores(tokens)
 
-        # Get top-k results
-        top_indices = scores.argsort()[-top_k:][::-1]
+        # Score everything, filter, then take top-k
+        ranked = scores.argsort()[::-1]
 
         results = []
-        for idx in top_indices:
-            if scores[idx] > 0:
-                doc = self.documents[idx]
-                results.append({
-                    "chunk_id": doc["chunk_id"],
-                    "score": float(scores[idx]),
-                    "metadata": doc["metadata"],
-                    "text": doc["text"][:200],
-                    "source": "bm25",
-                })
+        for idx in ranked:
+            if scores[idx] <= 0:
+                break
+            doc = self.documents[idx]
+            if filters and not self._passes_filters(doc["metadata"], filters):
+                continue
+            results.append({
+                "chunk_id": doc["chunk_id"],
+                "score": float(scores[idx]),
+                "metadata": doc["metadata"],
+                "text": doc["text"][:200],
+                "source": "bm25",
+            })
+            if len(results) >= top_k:
+                break
 
         return results
+
+    @staticmethod
+    def _passes_filters(meta: dict, filters: dict) -> bool:
+        doc_types = filters.get("doc_types")
+        if doc_types and meta.get("doc_type") not in doc_types:
+            return False
+        date_iso = meta.get("date_iso", "")
+        date_from = filters.get("date_from")
+        date_to = filters.get("date_to")
+        if date_from or date_to:
+            if not date_iso:
+                return False
+            # Lexicographic ISO comparison; a chunk whose date is a prefix of the
+            # bound (e.g. "1801" vs "1801-03") could fall in range, so it passes.
+            if date_from and date_iso < date_from and not date_from.startswith(date_iso):
+                return False
+            if date_to and date_iso > date_to and not date_iso.startswith(date_to):
+                return False
+        return True
 
     def _build_searchable_text(self, chunk: HumboldtChunk) -> str:
         """
@@ -94,14 +127,12 @@ class BM25Index:
         """
         parts = [chunk.text_regularized]
 
-        # Boost person names (repeat for higher weight)
+        # One extra mention per entity name: enough to match annotated spellings,
+        # without the double-weighting that drowned narrative text in entity hits.
         for person in chunk.persons:
             parts.append(person.name)
-            parts.append(person.name)  # Double-weight
 
-        # Boost place names
         for place in chunk.places:
-            parts.append(place.name)
             parts.append(place.name)
 
         # Add topics

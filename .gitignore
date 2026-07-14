@@ -5,3 +5,4 @@ data/vectordb/
 data/processed/embeddings.npy
 *.tar.gz
 .venv/
+data/edh-source/

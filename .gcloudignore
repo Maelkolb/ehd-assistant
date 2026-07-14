@@ -4,3 +4,4 @@ __pycache__
 .env
 *.tar.gz
 .venv/
+data/edh-source/

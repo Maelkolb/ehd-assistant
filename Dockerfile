@@ -1,35 +1,23 @@
 FROM python:3.12-slim
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc && rm -rf /var/lib/apt/lists/*
-
+# Lexical stack only — no torch, no sentence-transformers, no baked model.
+# (Image went from ~3 GB to well under 300 MB; Cloud Run cold starts drop.)
 RUN pip install --no-cache-dir \
-    torch --index-url https://download.pytorch.org/whl/cpu
-
-RUN pip install --no-cache-dir \
-    lxml>=4.9 pydantic>=2.0 numpy>=1.24 \
-    fastapi>=0.104 "uvicorn[standard]>=0.24" \
-    rank-bm25>=0.2.2 chromadb>=0.4 \
-    sentence-transformers>=2.2 \
-    google-cloud-aiplatform>=1.38 vertexai>=1.38
-
-# Pre-download model AND tokenizer at build time
-RUN python -c "from sentence_transformers import SentenceTransformer; \
-    m = SentenceTransformer('intfloat/multilingual-e5-large-instruct'); \
-    m.save('/app/models/e5-large-instruct')"
+    "lxml>=4.9" "pydantic>=2.0" "numpy>=1.24" \
+    "fastapi>=0.104" "uvicorn[standard]>=0.24" \
+    "rank-bm25>=0.2.2" \
+    "anthropic>=0.116"
 
 COPY src/ src/
 COPY config/ config/
 COPY static/ static/
+# Indexes are build artifacts produced by:
+#   ./scripts/fetch_corpus.sh && python -m src.ingestion.ingest data/edh-source/data
 COPY data/processed/ data/processed/
-COPY data/vectordb/ data/vectordb/
 
-# Force offline mode — never call HuggingFace at runtime
-ENV TRANSFORMERS_OFFLINE=1
-ENV HF_HUB_OFFLINE=1
-ENV SENTENCE_TRANSFORMERS_HOME=/app/models
-ENV EMBEDDING_MODEL=/app/models/e5-large-instruct
+# Model IDs are env-only. Set at deploy time:
+#   ANTHROPIC_API_KEY, LLM_MODEL (default claude-sonnet-5), CORS_ORIGINS
 ENV PORT=8080
 EXPOSE 8080
 

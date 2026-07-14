@@ -203,6 +203,12 @@ class ChunkingPipeline:
             f"Erwähnte Orte: {', '.join(list(all_places.keys())[:15])}. "
         )
 
+        # Document-level URL: cut after the doc_id segment (drops any folio
+        # suffix without ever cutting the doc_id itself).
+        url = chunks[0].url
+        if chunks[0].doc_id and chunks[0].doc_id in url:
+            url = url[: url.index(chunks[0].doc_id) + len(chunks[0].doc_id)]
+
         return HumboldtChunk(
             doc_id=chunks[0].doc_id,
             doc_title=chunks[0].doc_title,
@@ -210,7 +216,7 @@ class ChunkingPipeline:
             folio_start=chunks[0].folio_start,
             folio_end=chunks[-1].folio_end,
             entry_number="Übersicht",
-            url=chunks[0].url.rsplit("/", 1)[0] if "/" in chunks[0].url else chunks[0].url,
+            url=url,
             date_iso=dates_sorted[0] if dates_sorted else "",
             date_display=date_range,
             text_regularized=summary_text,

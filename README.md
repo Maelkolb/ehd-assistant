@@ -1,62 +1,59 @@
-# Humboldt RAG System
+# Humboldt Retrieval System
 
-A domain-specific RAG chatbot for the **edition humboldt digital** — the digital edition of Alexander von Humboldt's diaries and letters.
+A domain-specific chatbot for the **edition humboldt digital** — the digital edition of Alexander von Humboldt's diaries, letters, documents and chronology (Berlin-Brandenburgische Akademie der Wissenschaften).
+
+Retrieval is **agentic and lexical**: Claude drives structured search tools built from the edition's own TEI annotations. There is no embedding/vector leg — the editors already solved spelling variance through entity annotation, which beats both embeddings and raw grep for this corpus. See `PLAN.md` for the full rationale.
 
 ## Architecture
 
 ```
-User Query
-    │
-    ▼
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│ Query        │────▶│ Hybrid       │────▶│ LLM          │
-│ Understanding│     │ Retrieval    │     │ Generation   │
-└──────────────┘     └──────────────┘     └──────────────┘
-                      │    │    │
-                      ▼    ▼    ▼
-                   Vector BM25 Graph
-                   Store  Index (Neo4j)
-                   (Qdrant)
+User query
+   │
+   ▼
+Agent loop (Claude + tools, max 4 tool rounds)
+   ├─ lookup_entity(name)            → register index (fuzzy name → entity, bio, IDs)
+   ├─ chunks_for_entity(humboldt_id) → inverted entity index (spelling-immune)
+   ├─ search(query, doc_type?, date?)→ BM25 over TEXT chunks (registers excluded)
+   ├─ grep(pattern, doc_type?)       → regex (exact phrases, measurements)
+   ├─ get_context(chunk_id)          → neighboring passages / parent document
+   └─ answer with [Quelle N] citations
 ```
 
-## Implementation Steps
-
-### Phase 1: Data Ingestion ✅
-- `src/ingestion/tei_parser.py` — Parse TEI-XML into structured chunks
-- `src/ingestion/chunking.py` — Intelligent chunking by Humboldt's entry numbers
-- `src/ingestion/embeddings.py` — Generate embeddings for all chunks
-- `src/ingestion/ingest.py` — Orchestrate the full pipeline
-
-### Phase 2: Retrieval
-- `src/retrieval/vector_search.py` — Semantic search via Qdrant
-- `src/retrieval/keyword_search.py` — BM25 keyword search
-- `src/retrieval/graph_search.py` — Structured graph queries (Neo4j)
-- `src/retrieval/hybrid.py` — Reciprocal Rank Fusion + Re-ranking
-
-### Phase 3: Generation
-- `src/generation/prompt.py` — System prompt & context assembly
-- `src/generation/generate.py` — LLM generation with citation grounding
-- `src/generation/verify.py` — Post-generation citation verification
-
-### Phase 4: API & Frontend
-- `src/api/main.py` — FastAPI backend
-- `frontend/` — Chat widget (embeddable in edition-humboldt.de)
+- **Registers** (17.5k persons/places/plants/glossary/institutions) never enter text ranking; they serve entity resolution and "Wer war X?" lookups.
+- **Editorial notes** are indexed as first-class chunks (`doc_type=editorial_note`) so the editors' voice is retrievable and attributable.
+- The one-shot retrieve-then-generate path is kept behind `RETRIEVAL_MODE=oneshot` for A/B comparison; `/search` is the deterministic debug endpoint.
 
 ## Quick Start
 
 ```bash
-pip install -r requirements.txt
-# Ingest a single diary:
-python -m src.ingestion.ingest data/raw/H0019734g.xml
-# Start the API:
-uvicorn src.api.main:app --reload
+export ANTHROPIC_API_KEY=sk-ant-...
+./run.sh setup     # install dependencies
+./run.sh fetch     # clone telota/edition-humboldt-digital @ v11.0.0 (pinned)
+./run.sh ingest    # build chunk store, BM25 text index, entity index
+./run.sh serve     # http://localhost:8000
 ```
 
+## Configuration (env)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | required for generation |
+| `LLM_MODEL` | `claude-sonnet-5` | Claude model ID |
+| `RETRIEVAL_MODE` | `agentic` | `oneshot` = legacy pipeline |
+| `CORS_ORIGINS` | `*` (logs a warning) | comma-separated allowlist for production |
+| `GEMINI_MODEL` | — | only if falling back to Vertex AI; env-only by design |
+
+## Layout
+
+- `scripts/fetch_corpus.sh` — pinned corpus download (reproducible `data/`)
+- `src/ingestion/` — TEI parsing, chunking, register parsing, index build
+- `src/retrieval/` — BM25 (`keyword_search.py`), entity index, lexical retriever
+- `src/generation/agent.py` — the agentic tool loop (Claude)
+- `src/generation/generate.py` — legacy one-shot generation
+- `src/api/main.py` — FastAPI backend (`/chat`, `/search`, `/health`, `/stats`)
+- `data/processed/` — build artifacts: `chunk_store.json`, `bm25_text.json`, `entity_index.json`
+
 ## Tech Stack
-- **Vector DB:** Qdrant (or ChromaDB for local dev)
-- **Keyword Search:** rank_bm25
-- **Knowledge Graph:** Neo4j (optional, enhances structured queries)
-- **Embeddings:** sentence-transformers (multilingual-e5-large-instruct)
-- **LLM:** Anthropic Claude API (or OpenAI)
-- **API:** FastAPI
-- **Frontend:** React (lightweight chat widget)
+- **Search:** rank_bm25 + annotation-derived entity index (no vector DB)
+- **LLM:** Anthropic Claude (native tool use); OpenAI/Gemini fallbacks
+- **API:** FastAPI · **Deploy:** Docker/Cloud Run (slim image, no torch)

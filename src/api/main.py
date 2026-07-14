@@ -19,55 +19,73 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.ingestion.ingest import IngestionPipeline
-from src.ingestion.embeddings import EmbeddingPipeline, MockBackend
-from src.retrieval.hybrid import HybridRetriever
+from src.retrieval.lexical import LexicalRetriever
 from src.generation.generate import AnswerGenerator, MockGenerator
 
 logger = logging.getLogger(__name__)
+
+
+def _load_dotenv() -> None:
+    """Load .env from the repo root; real environment variables win."""
+    env_file = Path(__file__).parent.parent.parent / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.strip().strip("\"'"))
+
+
+_load_dotenv()
 
 # =============================================================================
 # Global state (initialized on startup)
 # =============================================================================
 
 pipeline: IngestionPipeline | None = None
-retriever: HybridRetriever | None = None
+retriever: LexicalRetriever | None = None
 generator: AnswerGenerator | MockGenerator | None = None
+agent = None  # AgenticAnswerer when Claude is available
+generation_healthy: bool = False
 
 
-def _load_query_embedding_fn():
-    """
-    Load an embedding function for query-time use.
-    Tries sentence-transformers (CPU is fine for single queries),
-    then falls back to mock.
-    """
-    model_name = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-large-instruct")
+def _generation_health_check(gen) -> None:
+    """Fire one tiny generation call and log loudly on failure."""
+    global generation_healthy
+    if isinstance(gen, MockGenerator):
+        logger.warning("Generation health check skipped: mock generator active.")
+        generation_healthy = False
+        return
     try:
-        from sentence_transformers import SentenceTransformer
-        logger.info(f"Loading embedding model for queries: {model_name} (CPU)...")
-        model = SentenceTransformer(model_name, device="cpu")
-
-        def embed_query(text: str) -> list[float]:
-            # e5-instruct models expect "query: " prefix
-            result = model.encode(
-                [f"query: {text}"],
-                normalize_embeddings=True,
+        if isinstance(gen, AnswerGenerator) and gen.provider == "anthropic":
+            gen.client.messages.create(
+                model=gen.model, max_tokens=16,
+                messages=[{"role": "user", "content": "ping"}],
             )
-            return result[0].tolist()
-
-        logger.info(f"✓ Query embeddings: {model_name} on CPU")
-        return embed_query
-
-    except ImportError:
-        logger.warning("sentence-transformers not installed. Using mock embeddings.")
-        logger.warning("Install with: pip install sentence-transformers")
-        embed_pipeline = EmbeddingPipeline(backend=MockBackend(384))
-        return embed_pipeline.embed_query
+        elif isinstance(gen, AnswerGenerator) and gen.provider == "openai":
+            gen.client.chat.completions.create(
+                model=gen.model, max_tokens=16,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+        else:  # GeminiGenerator
+            gen._utility.generate_content(
+                "ping", generation_config=gen._gc(max_output_tokens=16)
+            )
+        generation_healthy = True
+        logger.info(f"✓ Generation health check passed: {getattr(gen, 'model', '?')}")
+    except Exception as e:
+        generation_healthy = False
+        logger.error("=" * 70)
+        logger.error(f"GENERATION HEALTH CHECK FAILED: {e}")
+        logger.error(f"Model: {getattr(gen, 'model', '?')} — the bot cannot answer questions.")
+        logger.error("Check LLM_MODEL / GEMINI_MODEL and API credentials.")
+        logger.error("=" * 70)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize the RAG system on startup."""
-    global pipeline, retriever, generator
+    global pipeline, retriever, generator, agent
 
     logging.basicConfig(level=logging.INFO)
     logger.info("Starting Humboldt RAG system...")
@@ -77,56 +95,56 @@ async def lifespan(app: FastAPI):
     pipeline = IngestionPipeline(data_dir=data_dir)
     pipeline.load()
 
-    # If no data loaded, check for raw files to ingest
     if not pipeline.chunk_store:
-        raw_dir = Path(data_dir) / "raw"
-        if raw_dir.exists() and list(raw_dir.glob("*.xml")):
-            logger.info("No processed data found. Running initial ingestion...")
-            pipeline.ingest_directory(raw_dir)
+        logger.error(
+            "No data available! Run ./scripts/fetch_corpus.sh and then "
+            "`python -m src.ingestion.ingest data/edh-source/data`."
+        )
 
-    if not pipeline.chunk_store:
-        logger.error("No data available! Run ingestion first or check DATA_DIR.")
-
-    # Set up embedding function for queries
-    embed_fn = _load_query_embedding_fn()
-
-    # Initialize retriever
-    retriever = HybridRetriever(
-        vector_store=pipeline.vector_store,
+    # Initialize retriever (lexical only — no dense leg, see PLAN.md)
+    retriever = LexicalRetriever(
         bm25_index=pipeline.bm25_index,
-        embedding_fn=embed_fn,
         chunk_store=pipeline.chunk_store,
     )
 
-    # Initialize generator
+    # Initialize generator — Claude is the default backend.
+    # Model IDs come from the environment only (LLM_MODEL / GEMINI_MODEL);
+    # hardcoded model defaults have caused two silent outages.
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
     openai_key = os.environ.get("OPENAI_API_KEY")
+    gcp_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
 
     if anthropic_key:
         generator = AnswerGenerator(provider="anthropic", api_key=anthropic_key)
-        logger.info("Using Anthropic Claude for generation")
+        logger.info(f"Using Anthropic Claude for generation: {generator.model}")
+        # Agentic retrieval loop is the default answer path; the one-shot
+        # retrieve-then-generate pipeline stays available via RETRIEVAL_MODE=oneshot.
+        if os.environ.get("RETRIEVAL_MODE", "agentic") == "agentic":
+            from src.generation.agent import AgenticAnswerer
+            agent = AgenticAnswerer(
+                retriever=retriever,
+                entity_index=pipeline.entity_index,
+                api_key=anthropic_key,
+            )
+            logger.info(f"Agentic retrieval loop enabled ({agent.model})")
     elif openai_key:
         generator = AnswerGenerator(provider="openai", model="gpt-4o", api_key=openai_key)
         logger.info("Using OpenAI GPT-4o for generation")
-    else:
-        # Try Gemini via Vertex AI
-        gcp_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-        if gcp_project:
-            try:
-                from src.generation.gemini_backend import GeminiGenerator
-                generator = GeminiGenerator(
-                    model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
-                    project_id=gcp_project,
-                    use_vertex=True,
-                )
-                logger.info("Using Gemini via Vertex AI for generation")
-            except Exception as e:
-                logger.warning(f"Gemini init failed: {e}")
-                generator = MockGenerator()
-        else:
+    elif gcp_project:
+        try:
+            from src.generation.gemini_backend import GeminiGenerator
+            generator = GeminiGenerator(project_id=gcp_project, use_vertex=True)
+            logger.info(f"Using Gemini via Vertex AI for generation: {generator.model}")
+        except Exception as e:
+            logger.error(f"Gemini init failed: {e}")
             generator = MockGenerator()
-            logger.warning("No LLM API key found. Using mock generator.")
+    else:
+        generator = MockGenerator()
+        logger.warning("No LLM API key found. Using mock generator.")
 
+    # Startup health check: one tiny generation call, so a broken/retired
+    # model ID fails loudly at deploy time instead of silently in production.
+    _generation_health_check(generator)
 
     logger.info(f"System ready. {len(pipeline.chunk_store)} chunks loaded.")
 
@@ -146,10 +164,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = [
+    o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()
+]
+if _cors_origins == ["*"]:
+    logger.warning("CORS is open to all origins — set CORS_ORIGINS in production.")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production!
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -178,6 +201,7 @@ class ChatResponse(BaseModel):
     sources: list[Source]
     model: str
     chunks_retrieved: int
+    trace: list[dict] = []
 
 class SearchRequest(BaseModel):
     query: str
@@ -202,10 +226,31 @@ class SearchResponse(BaseModel):
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """Main chat endpoint with multi-query retrieval."""
+    """Main chat endpoint. Agentic retrieval loop by default;
+    one-shot retrieve-then-generate as fallback (RETRIEVAL_MODE=oneshot)."""
     if retriever is None or generator is None:
         raise HTTPException(500, "System not initialized")
 
+    if agent is not None:
+        result = agent.generate(request.query)
+        return ChatResponse(
+            answer=result["answer"],
+            sources=[
+                Source(
+                    index=s["index"],
+                    citation_label=s["citation_label"],
+                    url=s.get("url", ""),
+                    score=0.0,
+                    doc_type=s.get("doc_type", ""),
+                )
+                for s in result["sources"]
+            ],
+            model=result["model"],
+            chunks_retrieved=len(result["sources"]),
+            trace=result.get("trace", []),
+        )
+
+    # --- legacy one-shot path ---
     # Stage 1: Query expansion (if generator supports it)
     if hasattr(generator, 'expand_query'):
         queries = generator.expand_query(request.query)
@@ -239,7 +284,7 @@ async def chat(request: ChatRequest):
     # Format response
     if isinstance(answer, dict):
         answer_text = answer.get("answer", "")
-        answer_model = "gemini-2.0-flash"
+        answer_model = getattr(generator, "model", "unknown")
         # Use sources from generator (post-reranking)
         gen_sources = answer.get("sources", [])
     else:
@@ -278,6 +323,33 @@ async def chat(request: ChatRequest):
         chunks_retrieved=len(results),
     )
 
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """
+    Streaming chat: Server-Sent Events with live agent-loop progress.
+    Events: tool_call, tool_result, answer, error (JSON in the data field).
+    """
+    if agent is None:
+        raise HTTPException(400, "Agentic mode not enabled (RETRIEVAL_MODE!=agentic or no Claude key)")
+
+    import json as _json
+    from fastapi.responses import StreamingResponse
+
+    def event_source():
+        try:
+            for event in agent.iter_events(request.query):
+                yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.exception("chat_stream failed")
+            yield f"data: {_json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/search", response_model=SearchResponse)
 async def search(request: SearchRequest):
     """Search endpoint — retrieval only, no generation."""
@@ -308,9 +380,10 @@ async def search(request: SearchRequest):
 @app.get("/health")
 async def health():
     return {
-        "status": "ok",
+        "status": "ok" if generation_healthy else "degraded",
+        "generation_healthy": generation_healthy,
+        "model": getattr(generator, "model", None),
         "chunks_loaded": len(pipeline.chunk_store) if pipeline else 0,
-        "vector_count": pipeline.vector_store.count() if pipeline else 0,
     }
 
 
@@ -340,11 +413,11 @@ async def stats():
         "documents": len(doc_ids),
         "unique_persons": len(all_persons),
         "unique_places": len(all_places),
+        "entities": len(pipeline.entity_index.entities),
         "date_range": {
             "earliest": min(all_dates) if all_dates else None,
             "latest": max(all_dates) if all_dates else None,
         },
-        "vector_count": pipeline.vector_store.count(),
     }
 
 # --- Static file serving (appended fix) ---

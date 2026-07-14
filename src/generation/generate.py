@@ -10,7 +10,7 @@ import re
 import logging
 from dataclasses import dataclass, field
 
-from src.retrieval.hybrid import RetrievalResult
+from src.retrieval.results import RetrievalResult
 
 logger = logging.getLogger(__name__)
 
@@ -130,9 +130,12 @@ class AnswerGenerator:
     def __init__(
         self,
         provider: str = "anthropic",  # "anthropic" or "openai"
-        model: str = "claude-sonnet-4-20250514",
+        model: str | None = None,
         api_key: str | None = None,
     ):
+        import os
+        if model is None:
+            model = os.environ.get("LLM_MODEL", "claude-sonnet-5")
         self.provider = provider
         self.model = model
 

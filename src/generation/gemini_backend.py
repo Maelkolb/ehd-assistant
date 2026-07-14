@@ -22,7 +22,9 @@ Regeln:
 
 @dataclass
 class GeminiGenerator:
-    model: str = "gemini-2.5-flash"
+    # Env-only on purpose: hardcoded Gemini defaults rotted twice
+    # (gemini-2.0-flash retired 2026-06-01, gemini-2.5-flash retires 2026-10-16).
+    model: str | None = None
     project_id: str | None = None
     location: str = "europe-west1"
     use_vertex: bool = True
@@ -30,6 +32,13 @@ class GeminiGenerator:
     temperature: float = 1
 
     def __post_init__(self):
+        if not self.model:
+            self.model = os.environ.get("GEMINI_MODEL")
+        if not self.model:
+            raise ValueError(
+                "GEMINI_MODEL is not set. Gemini model IDs must come from the "
+                "environment (e.g. GEMINI_MODEL=gemini-3.5-flash) — no hardcoded default."
+            )
         import vertexai
         from vertexai.generative_models import GenerativeModel, GenerationConfig
         project = self.project_id or os.environ.get("GOOGLE_CLOUD_PROJECT")

@@ -162,11 +162,21 @@ class HumboldtChunk:
     @property
     def citation_label(self) -> str:
         """Human-readable citation for this chunk."""
+        type_labels = {
+            "diary": "Tagebuch",
+            "letter": "Brief",
+            "chronology": "Chronologie",
+            "document": "Dokument",
+            "research_article": "Forschungsbeitrag",
+            "editorial_note": "Editorischer Kommentar",
+        }
+        if self.doc_type.startswith("register_") or self.doc_type in (
+            "register_glossary", "register_plant"
+        ):
+            return self.doc_title or self.doc_id
         parts = []
-        if self.doc_type == "diary":
-            parts.append(f"Tagebuch")
-        elif self.doc_type == "letter":
-            parts.append(f"Brief")
+        if self.doc_type in type_labels:
+            parts.append(type_labels[self.doc_type])
         if self.folio_start:
             parts.append(f"Bl. {self.folio_start}")
         if self.date_display:

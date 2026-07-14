@@ -1,18 +1,25 @@
 """
-Main ingestion pipeline — orchestrates the full flow from TEI-XML to searchable index.
+Ingestion pipeline: TEI-XML -> lexical indexes.
+
+Produces three artifacts in data/processed/:
+1. chunk_store.json   — every chunk (text, editorial notes, registers) by ID
+2. bm25_text.json     — BM25 index over TEXT chunks only (registers excluded)
+3. entity_index.json  — register-backed entity registry + inverted mention index
+
+There is deliberately no dense/vector leg: the mock-embedding defaults of the
+old pipeline silently poisoned retrieval. If embeddings return, they must be
+added explicitly (see PLAN.md, Phase 1.7).
 
 Usage:
-    # Ingest a single file:
-    python -m src.ingestion.ingest data/raw/H0019734g.xml
+    # Ingest the full corpus (after ./scripts/fetch_corpus.sh):
+    python -m src.ingestion.ingest data/edh-source/data
 
-    # Ingest all XML files in a directory:
-    python -m src.ingestion.ingest data/raw/
-
-    # Use real embeddings (requires sentence-transformers):
-    python -m src.ingestion.ingest data/raw/ --embeddings real
+    # Ingest a single file (debugging):
+    python -m src.ingestion.ingest data/edh-source/data/letter/H0000003.xml
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sys
@@ -20,132 +27,215 @@ from pathlib import Path
 
 from src.ingestion.tei_parser import TEIParser
 from src.ingestion.chunking import ChunkingPipeline
-from src.ingestion.embeddings import EmbeddingPipeline, MockBackend, SentenceTransformerBackend
-from src.retrieval.vector_search import ChromaStore
+from src.ingestion.register_parser import RegisterParser
 from src.retrieval.keyword_search import BM25Index
+from src.retrieval.entity_index import EntityIndex
 from src.models import HumboldtChunk
 
 logger = logging.getLogger(__name__)
 
+# Corpus subdirectories containing text documents (searched via BM25)
+TEXT_DIRS = ["travel-journal", "letter", "document", "chronology", "research-article"]
+# Register subdirectories under index/ (entity resolution + definition lookup)
+REGISTER_TYPES = {
+    "person": "person",
+    "place": "place",
+    "institution": "institution",
+    "glossary": "glossary",
+    "plants": "plants",
+}
+
+MIN_EDITORIAL_NOTE_CHARS = 25
+
 
 class IngestionPipeline:
-    """
-    End-to-end ingestion from TEI-XML to indexed chunks.
+    """TEI-XML -> chunk store + BM25 text index + entity index."""
 
-    Steps:
-    1. Parse TEI-XML → raw HumboldtChunks
-    2. Chunk splitting & hierarchy → retrieval-ready chunks
-    3. Generate embeddings
-    4. Index in vector store + BM25
-    5. Save chunk store for retrieval enrichment
-    """
-
-    def __init__(
-        self,
-        data_dir: str = "data",
-        use_real_embeddings: bool = False,
-        embedding_model: str = "intfloat/multilingual-e5-large-instruct",
-        vector_store_type: str = "chroma",  # "chroma" or "qdrant"
-    ):
+    def __init__(self, data_dir: str = "data"):
         self.data_dir = Path(data_dir)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        (self.data_dir / "processed").mkdir(exist_ok=True)
-        (self.data_dir / "vectordb").mkdir(exist_ok=True)
+        (self.data_dir / "processed").mkdir(parents=True, exist_ok=True)
 
-        # Initialize components
         self.parser = TEIParser()
         self.chunker = ChunkingPipeline()
+        self.register_parser = RegisterParser()
 
-        # Embedding backend
-        if use_real_embeddings:
-            backend = SentenceTransformerBackend(embedding_model)
-        else:
-            backend = MockBackend(dimension=384)
-        self.embedder = EmbeddingPipeline(backend=backend)
-
-        # Vector store
-        if vector_store_type == "chroma":
-            self.vector_store = ChromaStore(
-                persist_dir=str(self.data_dir / "vectordb")
-            )
-        else:
-            from src.retrieval.vector_search import QdrantStore
-            self.vector_store = QdrantStore()
-
-        # BM25 index
-        self.bm25_index = BM25Index()
-
-        # Chunk store (all chunks by ID, for retrieval enrichment)
         self.chunk_store: dict[str, HumboldtChunk] = {}
+        self.bm25_index = BM25Index()          # text chunks only
+        self.entity_index = EntityIndex()
 
-    def ingest_file(self, filepath: str | Path) -> int:
-        """Ingest a single TEI-XML file. Returns number of chunks created."""
-        filepath = Path(filepath)
-        logger.info(f"{'='*60}")
-        logger.info(f"Ingesting: {filepath.name}")
-        logger.info(f"{'='*60}")
+    # =========================================================================
+    # Text documents
+    # =========================================================================
 
-        # Step 1: Parse
-        raw_chunks = self.parser.parse(filepath)
-        logger.info(f"  Parsed: {len(raw_chunks)} raw chunks")
-
-        # Step 2: Chunk
+    def ingest_text_file(self, filepath: str | Path) -> int:
+        """Parse + chunk one text document. Returns number of chunks stored."""
+        raw_chunks = self.parser.parse(Path(filepath))
         chunks = self.chunker.process(raw_chunks)
-        logger.info(f"  Chunked: {len(chunks)} retrieval chunks")
 
-        # Step 3: Embed
-        embedded = self.embedder.embed_chunks(chunks)
-        logger.info(f"  Embedded: {len(embedded)} vectors")
-
-        # Step 4: Index
-        self.vector_store.add_batch(embedded)
-        logger.info(f"  Vector store: {self.vector_store.count()} total documents")
-
-        # Step 5: Store chunks
+        count = 0
+        seen_notes: set[str] = set()
         for chunk in chunks:
             self.chunk_store[chunk.chunk_id] = chunk
+            count += 1
 
-        return len(chunks)
+            is_leaf = not chunk.child_chunk_ids
+            if is_leaf:
+                # Inverted entity index from the edition's annotations
+                for ent in chunk.persons + chunk.places:
+                    if ent.humboldt_id:
+                        self.entity_index.add_mention(
+                            ent.humboldt_id, ent.name, chunk.chunk_id
+                        )
+                # Editorial notes as first-class retrievable units
+                for note in chunk.editorial_notes:
+                    note_chunk = self._make_editorial_note_chunk(chunk, note, seen_notes)
+                    if note_chunk is not None:
+                        self.chunk_store[note_chunk.chunk_id] = note_chunk
+                        count += 1
 
-    def ingest_directory(self, dirpath: str | Path) -> int:
-        """Ingest all XML files in a directory."""
-        dirpath = Path(dirpath)
-        xml_files = sorted(dirpath.glob("*.xml"))
-        logger.info(f"Found {len(xml_files)} XML files in {dirpath}")
+        return count
 
+    def _make_editorial_note_chunk(
+        self, anchor: HumboldtChunk, note: str, seen_notes: set[str]
+    ) -> HumboldtChunk | None:
+        note = note.strip()
+        if len(note) < MIN_EDITORIAL_NOTE_CHARS:
+            return None
+        note_hash = hashlib.md5(f"{anchor.doc_id}:{note}".encode()).hexdigest()[:12]
+        if note_hash in seen_notes:
+            return None
+        seen_notes.add(note_hash)
+
+        return HumboldtChunk(
+            doc_id=anchor.doc_id,
+            chunk_id=f"ed_{note_hash}",
+            doc_title=anchor.doc_title,
+            doc_type="editorial_note",
+            folio_start=anchor.folio_start,
+            entry_number=anchor.entry_number,
+            url=anchor.url,
+            date_iso=anchor.date_iso,
+            date_display=anchor.date_display,
+            text_regularized=note,
+            text_plain=note.lower(),
+            source_desc=anchor.source_desc,
+            parent_chunk_id=anchor.chunk_id,
+        )
+
+    # =========================================================================
+    # Registers
+    # =========================================================================
+
+    def ingest_registers(self, index_dir: str | Path) -> int:
+        """Parse register files; store entries and feed the entity registry."""
+        index_dir = Path(index_dir)
+        count = 0
+        for dirname, reg_type in REGISTER_TYPES.items():
+            dirpath = index_dir / dirname
+            if not dirpath.exists():
+                logger.warning(f"Register directory missing: {dirpath}")
+                continue
+            chunks = self.register_parser.parse_directory(dirpath, reg_type)
+            for chunk in chunks:
+                self.chunk_store[chunk.chunk_id] = chunk
+                self._register_entity_from_chunk(chunk)
+                count += 1
+        return count
+
+    def _register_entity_from_chunk(self, chunk: HumboldtChunk) -> None:
+        if chunk.doc_type == "register_person" and chunk.persons:
+            ent = chunk.persons[0]
+            self.entity_index.add_register_entity(
+                humboldt_id=ent.humboldt_id, name=ent.name, entity_type="person",
+                description=chunk.text_regularized,
+                register_chunk_id=chunk.chunk_id,
+                gnd_id=ent.gnd_id, viaf_id=ent.viaf_id, url=chunk.url,
+            )
+        elif chunk.doc_type == "register_place" and chunk.places:
+            ent = chunk.places[0]
+            self.entity_index.add_register_entity(
+                humboldt_id=ent.humboldt_id, name=ent.name, entity_type="place",
+                description=chunk.text_regularized,
+                register_chunk_id=chunk.chunk_id,
+                geonames_id=ent.geonames_id, url=chunk.url,
+            )
+        else:
+            # institution / glossary / plant: doc_id is the stable ID
+            name = chunk.doc_title.split(": ", 1)[-1] if chunk.doc_title else ""
+            etype = chunk.doc_type.replace("register_", "")
+            self.entity_index.add_register_entity(
+                humboldt_id=chunk.doc_id, name=name, entity_type=etype,
+                description=chunk.text_regularized,
+                register_chunk_id=chunk.chunk_id, url=chunk.url,
+            )
+
+    # =========================================================================
+    # Corpus-level orchestration
+    # =========================================================================
+
+    def ingest_corpus(self, corpus_dir: str | Path) -> int:
+        """
+        Ingest the full edition corpus (the data/ dir of
+        telota/edition-humboldt-digital).
+        """
+        corpus_dir = Path(corpus_dir)
         total = 0
-        for xml_file in xml_files:
-            total += self.ingest_file(xml_file)
 
-        # Build BM25 index from all chunks
-        all_chunks = list(self.chunk_store.values())
-        self.bm25_index.build(all_chunks)
-        self.bm25_index.save(str(self.data_dir / "processed" / "bm25_index.json"))
+        for subdir in TEXT_DIRS:
+            dirpath = corpus_dir / subdir
+            if not dirpath.exists():
+                logger.warning(f"Text directory missing: {dirpath}")
+                continue
+            xml_files = sorted(dirpath.glob("*.xml"))
+            logger.info(f"Ingesting {len(xml_files)} files from {subdir}/")
+            for xml_file in xml_files:
+                try:
+                    total += self.ingest_text_file(xml_file)
+                except Exception as e:
+                    logger.error(f"Failed to ingest {xml_file.name}: {e}")
 
-        # Save chunk store
-        self._save_chunk_store()
+        index_dir = corpus_dir / "index"
+        if index_dir.exists():
+            total += self.ingest_registers(index_dir)
 
-        logger.info(f"\n{'='*60}")
-        logger.info(f"INGESTION COMPLETE")
-        logger.info(f"  Total chunks: {total}")
-        logger.info(f"  Vector store: {self.vector_store.count()} documents")
-        logger.info(f"  BM25 index: {len(all_chunks)} documents")
-        logger.info(f"{'='*60}")
-
+        self.build_indexes()
+        self.save()
         return total
 
-    def _save_chunk_store(self) -> None:
-        """Persist chunk store as JSON for fast loading."""
-        store_path = self.data_dir / "processed" / "chunk_store.json"
-        data = {cid: chunk.to_dict() for cid, chunk in self.chunk_store.items()}
+    def build_indexes(self) -> None:
+        """Build BM25 over text chunks only — registers never enter ranking."""
+        text_chunks = [
+            c for c in self.chunk_store.values()
+            if not c.doc_type.startswith("register_")
+        ]
+        self.bm25_index.build(text_chunks)
+        logger.info(
+            f"Indexes built: {len(text_chunks)} text chunks in BM25, "
+            f"{len(self.chunk_store) - len(text_chunks)} register entries outside, "
+            f"{len(self.entity_index.entities)} entities"
+        )
+
+    # =========================================================================
+    # Persistence
+    # =========================================================================
+
+    def save(self) -> None:
+        processed = self.data_dir / "processed"
+        store_path = processed / "chunk_store.json"
         with open(store_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        logger.info(f"Saved chunk store ({len(data)} chunks) to {store_path}")
+            json.dump(
+                {cid: c.to_dict() for cid, c in self.chunk_store.items()},
+                f, ensure_ascii=False,
+            )
+        logger.info(f"Saved chunk store ({len(self.chunk_store)} chunks) to {store_path}")
+
+        self.bm25_index.save(str(processed / "bm25_text.json"))
+        self.entity_index.save(processed / "entity_index.json")
 
     def load(self) -> None:
-        """Load persisted chunk store and BM25 index."""
-        # Load chunk store
-        store_path = self.data_dir / "processed" / "chunk_store.json"
+        processed = self.data_dir / "processed"
+
+        store_path = processed / "chunk_store.json"
         if store_path.exists():
             with open(store_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -154,10 +244,13 @@ class IngestionPipeline:
             }
             logger.info(f"Loaded {len(self.chunk_store)} chunks from store")
 
-        # Load BM25
-        bm25_path = self.data_dir / "processed" / "bm25_index.json"
+        bm25_path = processed / "bm25_text.json"
         if bm25_path.exists():
             self.bm25_index.load(str(bm25_path))
+
+        entity_path = processed / "entity_index.json"
+        if entity_path.exists():
+            self.entity_index.load(entity_path)
 
 
 # =============================================================================
@@ -171,24 +264,21 @@ def main():
     )
 
     if len(sys.argv) < 2:
-        print("Usage: python -m src.ingestion.ingest <path> [--embeddings real]")
-        print("  <path>: XML file or directory containing XML files")
+        print("Usage: python -m src.ingestion.ingest <corpus-data-dir | xml-file>")
+        print("  e.g.: python -m src.ingestion.ingest data/edh-source/data")
         sys.exit(1)
 
     path = Path(sys.argv[1])
-    use_real = "--embeddings" in sys.argv and "real" in sys.argv
+    pipeline = IngestionPipeline()
 
-    pipeline = IngestionPipeline(use_real_embeddings=use_real)
-
-    if path.is_file():
-        pipeline.ingest_file(path)
-        # Also build BM25
-        all_chunks = list(pipeline.chunk_store.values())
-        pipeline.bm25_index.build(all_chunks)
-        pipeline.bm25_index.save("data/processed/bm25_index.json")
-        pipeline._save_chunk_store()
-    elif path.is_dir():
-        pipeline.ingest_directory(path)
+    if path.is_dir():
+        total = pipeline.ingest_corpus(path)
+        print(f"Ingested {total} chunks.")
+    elif path.is_file():
+        n = pipeline.ingest_text_file(path)
+        pipeline.build_indexes()
+        pipeline.save()
+        print(f"Ingested {n} chunks from {path.name}.")
     else:
         print(f"Error: {path} not found")
         sys.exit(1)
