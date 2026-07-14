@@ -24,6 +24,15 @@ header .sub{font-size:.85rem;opacity:.8;font-style:italic}
 .src-ref{color:var(--primary);font-weight:600;font-size:.85em}
 .sources{margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--border);font-size:.85rem;color:#666}
 .sources a{color:var(--primary)}
+.copy-btn{background:none;border:none;cursor:pointer;font-size:.85rem;padding:0 .25rem;opacity:.55}
+.copy-btn:hover{opacity:1}
+.a-actions{margin-top:.6rem;display:flex;gap:.6rem;align-items:center}
+.a-actions button{background:#eef3ee;border:1px solid #c8d8ca;border-radius:2rem;padding:.3rem .9rem;font-family:inherit;font-size:.78rem;color:var(--primary);cursor:pointer}
+.a-actions button:hover{background:#e0ebe1}
+.chips{margin-top:.75rem;display:flex;flex-wrap:wrap;gap:.5rem}
+.chips button{padding:.4rem .9rem;background:#e8f0e9;border:1px solid #c8d8ca;border-radius:2rem;font-family:inherit;font-size:.8rem;cursor:pointer;color:var(--primary)}
+.chips button:hover{background:#dbe8dc}
+.live{white-space:pre-wrap;color:#444}
 .trace{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;color:#555;line-height:1.9}
 .trace .tl{display:block}
 .trace .tool{color:var(--primary);font-weight:600}
@@ -36,6 +45,7 @@ details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-fami
 .artifact{margin-top:1rem;border:1px solid var(--border);border-radius:.5rem;overflow:hidden}
 .artifact .a-title{background:#f4f6f4;padding:.5rem .75rem;font-size:.85rem;font-weight:600;color:#446644}
 .artifact .map-div{height:380px;width:100%}
+.artifact img{max-width:100%;display:block}
 .map-marker{background:var(--primary);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
 .tline{padding:.75rem 1rem}
 .tline .ev{display:flex;gap:.75rem;position:relative;padding-bottom:.9rem}
@@ -58,6 +68,8 @@ details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-fami
 .input-wrap select:focus{border-color:var(--primary)}
 .input-wrap button{padding:.75rem 1.5rem;background:var(--primary);color:#fff;border:none;border-radius:.75rem;font-family:inherit;font-size:1rem;cursor:pointer}
 .input-wrap button:disabled{opacity:.5}
+.input-wrap .reset-btn{background:#fff;color:#888;border:1px solid var(--border);padding:.75rem .9rem}
+.input-wrap .reset-btn:hover{color:var(--primary);border-color:var(--primary)}
 .welcome{text-align:center;padding:3rem 1rem;color:#666}
 .welcome h2{color:var(--text);margin-bottom:.5rem}
 .examples{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;margin-top:1rem}
@@ -76,6 +88,7 @@ details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-fami
 <div class="examples" id="examples"></div>
 </div></div>
 <div class="input-area"><div class="input-wrap">
+<button class="reset-btn" id="resetbtn" onclick="resetChat()" title="">↺</button>
 <select id="model" title="Claude"></select>
 <input id="q" onkeydown="if(event.key==='Enter')send()" autofocus>
 <button id="btn" onclick="send()"></button>
@@ -86,18 +99,23 @@ const I18N={
      wp:'Ich bin Alex und durchsuche die Reisetagebücher, Briefe und Dokumente Alexander von Humboldts.',
      placeholder:'Stellen Sie eine Frage...',send:'Senden',sources:'Quellen:',
      steps:'Recherche-Schritte',hits:'Treffer',error:'Fehler',noanswer:'Keine Antwort.',
+     share:'🔗 Link teilen',linkCopied:'✓ Link kopiert',citeTip:'Zitat kopieren',citeCopied:'✓ Zitat kopiert',
+     followups:'Weiterfragen:',reset:'Neues Gespräch',accessed:'abgerufen am',
      models:{'claude-haiku-4-5':'Haiku (schnell)','claude-sonnet-5':'Sonnet (ausgewogen)','claude-opus-4-8':'Opus (gründlich)'},
      tools:{lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext',where_was_humboldt:'📅 Chronologie',create_map:'🗺️ Karte',create_timeline:'📈 Zeitleiste',get_document:'📜 Dokument',query_measurements:'📏 Messwerte',code_execution:'🐍 Code'},
-     examples:['Welche Messungen machte Humboldt am Königstein?','Wen traf Humboldt in Wien?','Wer war Bonpland?','Was bedeutet "alii dicunt"?']},
+     examples:['Welche Messungen machte Humboldt am Königstein?','Wen traf Humboldt in Wien?','Wer war Bonpland?','Erstelle eine Karte der Italienreise 1805']},
  en:{sub:'Alex · Research Assistant',wh:'Ask Alex',
      wp:"I'm Alex — I search Alexander von Humboldt's travel journals, letters and documents.",
      placeholder:'Ask a question...',send:'Send',sources:'Sources:',
      steps:'Research steps',hits:'results',error:'Error',noanswer:'No answer.',
+     share:'🔗 Share link',linkCopied:'✓ Link copied',citeTip:'Copy citation',citeCopied:'✓ Citation copied',
+     followups:'Follow up:',reset:'New conversation',accessed:'accessed',
      models:{'claude-haiku-4-5':'Haiku (fast)','claude-sonnet-5':'Sonnet (balanced)','claude-opus-4-8':'Opus (thorough)'},
      tools:{lookup_entity:'📇 Index',chunks_for_entity:'🔗 Annotated passages',search:'🔍 Search',grep:'⌕ Grep',get_context:'📄 Context',where_was_humboldt:'📅 Chronology',create_map:'🗺️ Map',create_timeline:'📈 Timeline',get_document:'📜 Document',query_measurements:'📏 Measurements',code_execution:'🐍 Code'},
-     examples:['What measurements did Humboldt take at the Königstein?','Whom did Humboldt meet in Vienna?','Who was Bonpland?','What does "alii dicunt" mean?']}
+     examples:['What measurements did Humboldt take at the Königstein?','Whom did Humboldt meet in Vienna?','Who was Bonpland?','Create a map of the 1805 Italy journey']}
 };
 let LANG=localStorage.getItem('humboldt_lang')||'de';
+let convo=[];  // [{role, content}] — client-held conversation history
 const API=window.location.origin,chat=document.getElementById('chat'),q=document.getElementById('q'),btn=document.getElementById('btn'),wel=document.getElementById('welcome');
 function T(){return I18N[LANG]}
 function applyLang(){
@@ -107,6 +125,7 @@ function applyLang(){
   document.getElementById('wh').textContent=t.wh;
   document.getElementById('wp').textContent=t.wp;
   q.placeholder=t.placeholder;btn.textContent=t.send;
+  document.getElementById('resetbtn').title=t.reset;
   const ex=document.getElementById('examples');ex.innerHTML='';
   t.examples.forEach(x=>{const b=document.createElement('button');b.textContent=x;b.onclick=()=>ask(b);ex.appendChild(b)});
   const sel=document.getElementById('model'),cur=sel.value||'claude-haiku-4-5';sel.innerHTML='';
@@ -117,6 +136,12 @@ applyLang();
 function ask(b){q.value=b.textContent;send()}
 function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
 function add(r,h){const d=document.createElement('div');d.className='msg '+r;d.innerHTML='<div class="b">'+(r==='user'?esc(h):h)+'</div>';chat.appendChild(d);chat.scrollTop=1e6;return d}
+function resetChat(){convo=[];history.replaceState(null,'',location.pathname);document.querySelectorAll('.msg').forEach(m=>m.remove());wel.style.display='';q.focus()}
+function mdlite(raw){
+  let a=esc(raw);
+  a=a.replace(/\[(?:Quelle[n]?|Sources?)\s+[\d,\s und]+\]/g,'<span class="src-ref">$&</span>');
+  a=a.replace(/^### (.*)$/gm,'<b>$1</b>').replace(/^## (.*)$/gm,'<b>$1</b>').replace(/^# (.*)$/gm,'<b>$1</b>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+  return a}
 function argSummary(tool,inp){
   if(!inp)return'';
   if(tool==='search'){let s='„'+(inp.query||'')+'“';if(inp.doc_types)s+=' ['+inp.doc_types.join(',')+']';if(inp.date_from||inp.date_to)s+=' '+(inp.date_from||'')+'–'+(inp.date_to||'');return s}
@@ -125,15 +150,33 @@ function argSummary(tool,inp){
   if(tool==='chunks_for_entity')return inp.humboldt_id||'';
   if(tool==='get_context')return inp.chunk_id||'';
   if(tool==='where_was_humboldt')return (inp.date_from||'')+(inp.date_to&&inp.date_to!==inp.date_from?' – '+inp.date_to:'');
-  if(tool==='create_map')return'„'+(inp.title||'')+'“ ('+((inp.stations||[]).length)+' Stationen)';
+  if(tool==='create_map')return'„'+(inp.title||'')+'“ ('+((inp.stations||[]).length)+')';
   if(tool==='create_timeline')return'„'+(inp.title||'')+'“ ('+((inp.events||[]).length)+')';
   if(tool==='get_document')return inp.doc_id||'';
   if(tool==='query_measurements')return[inp.unit,inp.context_contains].filter(Boolean).join(' · ');
-  if(tool==='code_execution')return(inp.code||'').split('\n')[0].slice(0,60);
+  if(tool==='code_execution')return(inp.code||'').split('\n').filter(l=>l.trim())[0]?.slice(0,60)||'';
   return JSON.stringify(inp)}
+
+// --- gzip <-> base64url for share links ---
+async function gzipB64(str){
+  const stream=new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+  const buf=new Uint8Array(await new Response(stream).arrayBuffer());
+  let bin='';for(let i=0;i<buf.length;i+=0x8000)bin+=String.fromCharCode.apply(null,buf.subarray(i,i+0x8000));
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
+async function gunzipB64(b64){
+  b64=b64.replace(/-/g,'+').replace(/_/g,'/');
+  const bytes=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
+  const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return await new Response(stream).text()}
+
+function citationFor(s){
+  const t=T();const today=new Date().toISOString().slice(0,10);
+  const label=s.doc_title?(s.doc_title+' ('+s.citation_label+')'):s.citation_label;
+  return label+'. In: edition humboldt digital, hg. v. Ottmar Ette. Berlin-Brandenburgische Akademie der Wissenschaften, Berlin.'+(s.url?' '+s.url:'')+' ('+t.accessed+' '+today+').'}
+
 function renderArtifact(art,container){
   const box=document.createElement('div');box.className='artifact';
-  const tt=document.createElement('div');tt.className='a-title';tt.textContent=art.title||'';box.appendChild(tt);
+  if(art.title){const tt=document.createElement('div');tt.className='a-title';tt.textContent=art.title;box.appendChild(tt)}
   container.appendChild(box);
   if(art.type==='map'&&window.L){
     const mdiv=document.createElement('div');mdiv.className='map-div';box.appendChild(mdiv);
@@ -146,7 +189,7 @@ function renderArtifact(art,container){
         const ic=L.divIcon({className:'',html:'<div class="map-marker">'+(i+1)+'</div>',iconSize:[22,22],iconAnchor:[11,11]});
         let pop='<b>'+(i+1)+'. '+esc(st.label)+'</b>';
         if(st.date)pop+='<br>'+esc(st.date);
-        if(st.url)pop+='<br><a href="'+st.url+'" target="_blank">Register</a>';
+        if(st.url)pop+='<br><a href="'+esc(st.url)+'" target="_blank">Register</a>';
         L.marker(ll,{icon:ic}).addTo(map).bindPopup(pop);
       });
       if(art.connect_route&&pts.length>1)L.polyline(pts,{color:'#2c5530',weight:2.5,opacity:.75,dashArray:'6 6'}).addTo(map);
@@ -159,24 +202,85 @@ function renderArtifact(art,container){
       row.innerHTML='<div class="dt">'+esc(ev.date)+'</div><div class="dot"></div>'+
         '<div class="ev-body"><span class="lbl">'+esc(ev.label)+'</span>'+
         (ev.description?'<div class="dsc">'+esc(ev.description)+'</div>':'')+
-        (ev.url?'<a href="'+ev.url+'" target="_blank">→ Quelle</a>':'')+'</div>';
+        (ev.url?'<a href="'+esc(ev.url)+'" target="_blank">→ Quelle</a>':'')+'</div>';
       tl.appendChild(row);
     });
     box.appendChild(tl);
+  }else if(art.type==='image'){
+    const img=document.createElement('img');
+    img.src='data:'+(art.media_type||'image/png')+';base64,'+art.data;
+    img.alt=art.title||'';box.appendChild(img);
   }
 }
+
+function renderAnswer(bubble,queryText,d,traceEl){
+  const L2=T();
+  bubble.innerHTML='';
+  if(traceEl&&traceEl.childNodes.length){
+    const box=document.createElement('details');box.className='trace-box';
+    box.innerHTML='<summary>🔎 '+L2.steps+' ('+traceEl.childNodes.length+') · '+(d.elapsed_s||'?')+'s · '+esc(d.model||'')+'</summary>';
+    box.appendChild(traceEl);bubble.appendChild(box);
+  }
+  const ans=document.createElement('div');ans.innerHTML=mdlite(d.answer||L2.noanswer);bubble.appendChild(ans);
+  if(d.sources&&d.sources.length){
+    const src=document.createElement('div');src.className='sources';
+    src.innerHTML='<b>'+L2.sources+'</b><br>';
+    d.sources.forEach(s=>{
+      const line=document.createElement('span');
+      const label=s.citation_label||('#'+s.index);
+      line.innerHTML='['+s.index+'] '+(s.url?'<a href="'+esc(s.url)+'" target="_blank">'+esc(label)+'</a>':esc(label))+' ';
+      const cp=document.createElement('button');cp.className='copy-btn';cp.textContent='📋';cp.title=L2.citeTip;
+      cp.onclick=async()=>{try{await navigator.clipboard.writeText(citationFor(s));cp.textContent='✓';cp.title=L2.citeCopied;setTimeout(()=>{cp.textContent='📋';cp.title=L2.citeTip},1500)}catch(e){}};
+      line.appendChild(cp);line.appendChild(document.createElement('br'));
+      src.appendChild(line);
+    });
+    bubble.appendChild(src);
+  }
+  (d.artifacts||[]).forEach(art=>renderArtifact(art,bubble));
+  // share link
+  const actions=document.createElement('div');actions.className='a-actions';
+  const sh=document.createElement('button');sh.textContent=L2.share;
+  sh.onclick=async()=>{
+    try{
+      const payload={q:queryText,data:{answer:d.answer,sources:d.sources,artifacts:d.artifacts,model:d.model,elapsed_s:d.elapsed_s}};
+      const frag=await gzipB64(JSON.stringify(payload));
+      await navigator.clipboard.writeText(location.origin+location.pathname+'#a='+frag);
+      sh.textContent=L2.linkCopied;setTimeout(()=>sh.textContent=L2.share,2000);
+    }catch(e){console.warn(e)}
+  };
+  actions.appendChild(sh);bubble.appendChild(actions);
+  chat.scrollTop=1e6;
+}
+
+function renderChips(bubble,questions){
+  const L2=T();
+  const wrap=document.createElement('div');wrap.className='chips';
+  const lbl=document.createElement('span');lbl.style.cssText='font-size:.78rem;color:#888;align-self:center';lbl.textContent=L2.followups;wrap.appendChild(lbl);
+  questions.forEach(qq=>{
+    const b=document.createElement('button');b.textContent=qq;
+    b.onclick=()=>{q.value=qq;send()};wrap.appendChild(b);
+  });
+  bubble.appendChild(wrap);chat.scrollTop=1e6;
+}
+
 async function send(){
   const t=q.value.trim();if(!t)return;if(wel)wel.style.display='none';
   add('user',t);q.value='';btn.disabled=true;
-  const L=T();
+  const L2=T();
   const bot=add('bot','');const bubble=bot.querySelector('.b');
   const traceEl=document.createElement('div');traceEl.className='trace';bubble.appendChild(traceEl);
+  const live=document.createElement('div');live.className='live';bubble.appendChild(live);
   const think=document.createElement('div');think.className='typing';think.innerHTML='<span></span><span></span><span></span>';bubble.appendChild(think);
-  let pendingLine=null;
+  let pendingLine=null,liveText='';
   try{
     const model=document.getElementById('model').value;
-    const r=await fetch(API+'/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:t,model:model})});
-    if(!r.ok)throw new Error('HTTP '+r.status);
+    const r=await fetch(API+'/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query:t,model:model,history:convo.slice(-12)})});
+    if(!r.ok){
+      let msg='HTTP '+r.status;
+      try{const e=await r.json();if(e.detail)msg=e.detail}catch(_){}
+      throw new Error(msg);
+    }
     const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
     while(true){
       const {done,value}=await reader.read();if(done)break;
@@ -187,38 +291,48 @@ async function send(){
         handle(JSON.parse(raw.slice(6)));
       }
     }
-  }catch(e){bubble.innerHTML=L.error+': '+esc(e.message)}
+  }catch(e){bubble.innerHTML=esc(L2.error+': '+e.message)}
   btn.disabled=false;q.focus();
 
   function handle(ev){
     if(ev.type==='tool_call'){
+      liveText='';live.textContent='';
       pendingLine=document.createElement('span');pendingLine.className='tl pending';
-      pendingLine.innerHTML='<span class="tool">'+(L.tools[ev.tool]||ev.tool)+'</span> <span class="args">'+esc(argSummary(ev.tool,ev.input))+'</span>';
+      pendingLine.innerHTML='<span class="tool">'+(L2.tools[ev.tool]||ev.tool)+'</span> <span class="args">'+esc(argSummary(ev.tool,ev.input))+'</span>';
       traceEl.appendChild(pendingLine);chat.scrollTop=1e6;
     }else if(ev.type==='tool_result'){
       if(pendingLine){pendingLine.classList.remove('pending');
         const res=document.createElement('span');res.className='res';
-        res.textContent=' → '+ev.n+' '+L.hits+(ev.preview&&ev.preview.length?': '+ev.preview.slice(0,2).join(' · '):'');
+        res.textContent=' → '+ev.n+' '+L2.hits+(ev.preview&&ev.preview.length?': '+ev.preview.slice(0,2).join(' · '):'');
         pendingLine.appendChild(res);pendingLine=null}
       chat.scrollTop=1e6;
+    }else if(ev.type==='answer_delta'){
+      liveText+=ev.text;live.textContent=liveText;chat.scrollTop=1e6;
     }else if(ev.type==='answer'){
-      const d=ev.data;think.remove();
-      let a=(d.answer||L.noanswer).replace(/\[(?:Quelle[n]?|Sources?)\s+[\d,\s und]+\]/g,'<span class="src-ref">$&</span>');
-      a=a.replace(/^### (.*)$/gm,'<b>$1</b>').replace(/^## (.*)$/gm,'<b>$1</b>').replace(/^# (.*)$/gm,'<b>$1</b>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
-      let s='';
-      if(d.sources&&d.sources.length){s='<div class="sources"><b>'+L.sources+'</b><br>';d.sources.forEach(x=>{const l=x.citation_label||'#'+x.index;s+=`[${x.index}] ${x.url?'<a href="'+x.url+'" target="_blank">'+esc(l)+'</a>':esc(l)}<br>`});s+='</div>'}
-      const steps=traceEl.childNodes.length;
-      const box=document.createElement('details');box.className='trace-box';
-      box.innerHTML='<summary>🔎 '+L.steps+' ('+steps+') · '+(d.elapsed_s||'?')+'s · '+esc(d.model||'')+'</summary>';
-      box.appendChild(traceEl);
-      bubble.innerHTML='';bubble.appendChild(box);
-      const ans=document.createElement('div');ans.innerHTML=a+s;bubble.appendChild(ans);
-      (d.artifacts||[]).forEach(art=>renderArtifact(art,bubble));
-      chat.scrollTop=1e6;
+      think.remove();
+      renderAnswer(bubble,t,ev.data,traceEl);
+      convo.push({role:'user',content:t},{role:'assistant',content:(ev.data.answer||'').slice(0,4000)});
+      if(convo.length>12)convo=convo.slice(-12);
+    }else if(ev.type==='suggestions'){
+      renderChips(bubble,ev.questions||[]);
     }else if(ev.type==='error'){
-      think.remove();bubble.innerHTML=L.error+': '+esc(ev.message);
+      think.remove();bubble.innerHTML=esc(L2.error+': '+ev.message);
     }
   }
 }
+
+// shared-answer permalinks: #a=<gzip+base64url of {q, data}>
+window.addEventListener('DOMContentLoaded',async()=>{
+  if(!location.hash.startsWith('#a='))return;
+  try{
+    const payload=JSON.parse(await gunzipB64(location.hash.slice(3)));
+    if(!payload||!payload.data)return;
+    wel.style.display='none';
+    add('user',payload.q||'');
+    const bot=add('bot','');
+    renderAnswer(bot.querySelector('.b'),payload.q||'',payload.data,null);
+    convo=[{role:'user',content:payload.q||''},{role:'assistant',content:(payload.data.answer||'').slice(0,4000)}];
+  }catch(e){console.warn('share link decode failed',e)}
+});
 </script>
 </body></html>

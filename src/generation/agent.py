@@ -63,8 +63,10 @@ Außerdem:
   für Zusammenfassungen ganzer Dokumente.
 - `query_measurements`: strukturierte Suche in den von den Herausgebern ausgezeichneten \
   Messwerten (Wert, historische Einheit, metrische Umrechnung).
-- `code_execution` (falls verfügbar): Python-Sandbox OHNE Internetzugang — nur für \
-  Berechnungen, Umrechnungen, Statistik. NIE für Karten (dafür gibt es create_map).
+- `code_execution` (falls verfügbar): Python-Sandbox OHNE Internetzugang — für \
+  Berechnungen, Umrechnungen, Statistik. Diagramme mit matplotlib sind möglich: \
+  speichere sie als PNG (plt.savefig('diagramm.png')); erzeugte Bilder werden dem \
+  Nutzer automatisch angezeigt. NIE für Karten (dafür gibt es create_map).
 
 Empfohlene Strategie:
 1. Bei Fragen zu Personen/Orten: zuerst `lookup_entity`, dann `chunks_for_entity`.
@@ -303,20 +305,29 @@ class AgenticAnswerer:
     # Public API
     # =========================================================================
 
-    def generate(self, query: str, max_tokens: int = 3000, model: str | None = None) -> dict:
+    def generate(self, query: str, max_tokens: int = 3000, model: str | None = None,
+                 history: list[dict] | None = None) -> dict:
         """Run the loop to completion and return the final answer dict."""
         final = {}
-        for event in self.iter_events(query, max_tokens=max_tokens, model=model):
+        for event in self.iter_events(query, max_tokens=max_tokens, model=model,
+                                      history=history):
             if event["type"] == "answer":
                 final = event["data"]
+            elif event["type"] == "suggestions" and final:
+                final["suggestions"] = event["questions"]
         return final
 
-    def iter_events(self, query: str, max_tokens: int = 3000, model: str | None = None):
+    def iter_events(self, query: str, max_tokens: int = 3000, model: str | None = None,
+                    history: list[dict] | None = None):
         """
         Run the agent loop, yielding progress events as they happen:
-          {"type": "tool_call",   "round": n, "tool": ..., "input": {...}}
-          {"type": "tool_result", "tool": ..., "n": ..., "preview": [labels]}
-          {"type": "answer",      "data": {answer, sources, citations, model, trace, elapsed_s}}
+          {"type": "tool_call",    "round": n, "tool": ..., "input": {...}}
+          {"type": "tool_result",  "tool": ..., "n": ..., "preview": [labels]}
+          {"type": "answer_delta", "text": ...}                # streamed answer text
+          {"type": "answer",       "data": {answer, sources, citations, model,
+                                            trace, artifacts, elapsed_s}}
+          {"type": "suggestions",  "questions": [...]}         # after the answer
+        history: prior turns [{"role": "user"|"assistant", "content": str}, ...]
         """
         t0 = time.time()
         active_model = model or self.model
@@ -329,7 +340,7 @@ class AgenticAnswerer:
         if _code_execution_enabled(active_model):
             tools.append(CODE_EXECUTION_TOOL)
 
-        messages = [{"role": "user", "content": query}]
+        messages = list(history or []) + [{"role": "user", "content": query}]
         system = SYSTEM_PROMPT.format(max_rounds=MAX_TOOL_ROUNDS)
 
         response = None
@@ -356,14 +367,14 @@ class AgenticAnswerer:
                 })
 
             try:
-                response = self.client.messages.create(**kwargs)
+                response = yield from self._stream_round(kwargs)
             except Exception as e:
                 # graceful degradation if the model rejects the server tool
                 if CODE_EXECUTION_TOOL in tools and "code_execution" in str(e):
                     logger.warning(f"code_execution rejected on {active_model}, retrying without: {e}")
                     tools = [t for t in tools if t is not CODE_EXECUTION_TOOL]
                     kwargs["tools"] = tools
-                    response = self.client.messages.create(**kwargs)
+                    response = yield from self._stream_round(kwargs)
                 else:
                     raise
 
@@ -383,6 +394,8 @@ class AgenticAnswerer:
                     stdout = getattr(content, "stdout", "") or getattr(content, "stderr", "") or ""
                     yield {"type": "tool_result", "tool": "code_execution",
                            "n": 1, "preview": [stdout[:120]]}
+            # image files created in the sandbox become inline artifacts
+            self._collect_code_files(response, artifacts)
 
             if response.stop_reason == "pause_turn":
                 messages.append({"role": "assistant", "content": response.content})
@@ -449,6 +462,78 @@ class AgenticAnswerer:
             },
         }
 
+        if answer_text and os.environ.get("SUGGESTIONS", "1") != "0":
+            questions = self._suggest_followups(query, answer_text)
+            if questions:
+                yield {"type": "suggestions", "questions": questions}
+
+    def _stream_round(self, kwargs):
+        """One streaming API round: yields answer_delta events, returns the message."""
+        with self.client.messages.stream(**kwargs) as stream:
+            for text in stream.text_stream:
+                if text:
+                    yield {"type": "answer_delta", "text": text}
+            return stream.get_final_message()
+
+    IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
+
+    def _collect_code_files(self, response, artifacts: list) -> None:
+        """Download image files produced by code_execution as inline artifacts."""
+        import base64
+        for block in response.content:
+            if getattr(block, "type", "") != "bash_code_execution_tool_result":
+                continue
+            result = getattr(block, "content", None)
+            for ref in (getattr(result, "content", None) or []):
+                fid = getattr(ref, "file_id", None)
+                if not fid:
+                    continue
+                try:
+                    meta = self.client.beta.files.retrieve_metadata(fid)
+                    name = getattr(meta, "filename", "") or "datei"
+                    if not name.lower().endswith(self.IMAGE_EXTS):
+                        continue
+                    payload = self.client.beta.files.download(fid)
+                    raw = payload.read() if hasattr(payload, "read") else payload.content
+                    ext = name.rsplit(".", 1)[-1].lower()
+                    media = "image/svg+xml" if ext == "svg" else f"image/{'jpeg' if ext == 'jpg' else ext}"
+                    artifacts.append({
+                        "type": "image", "title": name,
+                        "media_type": media,
+                        "data": base64.b64encode(raw).decode(),
+                    })
+                    logger.info(f"Attached generated image {name} ({len(raw)} bytes)")
+                except Exception as e:
+                    logger.warning(f"Could not fetch generated file {fid}: {e}")
+
+    def _suggest_followups(self, query: str, answer: str) -> list[str]:
+        """One cheap Haiku call for 3 follow-up questions (same language)."""
+        try:
+            resp = self.client.messages.create(
+                model="claude-haiku-4-5",
+                max_tokens=200,
+                system="Du schlägst Anschlussfragen für einen Rechercheassistenten zur "
+                       "edition humboldt digital (Tagebücher, Briefe, Chronologie Alexander "
+                       "von Humboldts) vor. Antworte NUR mit 3 kurzen Fragen (je max. 12 "
+                       "Wörter), eine pro Zeile, ohne Nummerierung. Verwende die Sprache "
+                       "der ursprünglichen Frage.",
+                messages=[{
+                    "role": "user",
+                    "content": f"Frage: {query}\n\nAntwort (gekürzt): {answer[:1500]}\n\n"
+                               "3 sinnvolle Anschlussfragen:",
+                }],
+            )
+            text = "".join(b.text for b in resp.content if b.type == "text")
+            out = []
+            for line in text.splitlines():
+                q = line.strip().lstrip("-•0123456789. ").strip()
+                if len(q) > 8:
+                    out.append(q)
+            return out[:3]
+        except Exception as e:
+            logger.warning(f"Follow-up suggestions failed: {e}")
+            return []
+
     @staticmethod
     def _result_preview(payload, limit: int = 3) -> list[str]:
         """Short human-readable labels of what a tool returned."""
@@ -512,6 +597,7 @@ class AgenticAnswerer:
             "index": nr,
             "chunk_id": chunk_id,
             "citation_label": chunk.citation_label if chunk else chunk_id,
+            "doc_title": chunk.doc_title if chunk else "",
             "url": chunk.url if chunk else "",
             "doc_type": chunk.doc_type if chunk else "",
         }
