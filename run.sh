@@ -19,6 +19,7 @@ usage() {
     echo "  setup       Install dependencies"
     echo "  fetch       Download the TEI corpus (pinned tag) into data/edh-source/"
     echo "  ingest      Ingest the corpus into lexical indexes"
+    echo "  enrich      Resolve place coordinates via Wikidata (for maps)"
     echo "  serve       Start the API server"
     echo "  docker      Start everything with Docker Compose"
     echo "  test        Run pipeline test"
@@ -48,6 +49,11 @@ cmd_ingest() {
     echo -e "${GREEN}✓ Ingestion complete${NC}"
 }
 
+cmd_enrich() {
+    echo -e "${GREEN}Resolving place coordinates via Wikidata ...${NC}"
+    python scripts/enrich_coordinates.py
+}
+
 cmd_serve() {
     echo -e "${GREEN}Starting API server on http://localhost:8000${NC}"
     echo "  Docs: http://localhost:8000/docs"
@@ -70,6 +76,7 @@ case "${1:-}" in
     setup)       cmd_setup ;;
     fetch)       cmd_fetch ;;
     ingest)      cmd_ingest ;;
+    enrich)      cmd_enrich ;;
     serve)       cmd_serve ;;
     docker)      cmd_docker ;;
     test)        cmd_test ;;

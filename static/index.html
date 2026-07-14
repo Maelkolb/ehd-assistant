@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Alex — ehd-assistant</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{--primary:#2c5530;--bg:#fafaf8;--text:#2a2a2a;--border:#ddd}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -31,6 +33,20 @@ header .sub{font-size:.85rem;opacity:.8;font-style:italic}
 @keyframes blink{50%{opacity:.2}}
 details.trace-box{margin-bottom:.75rem;padding:.5rem .75rem;background:#f4f6f4;border:1px solid #e0e6e0;border-radius:.5rem}
 details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-family:ui-monospace,Menlo,Consolas,monospace}
+.artifact{margin-top:1rem;border:1px solid var(--border);border-radius:.5rem;overflow:hidden}
+.artifact .a-title{background:#f4f6f4;padding:.5rem .75rem;font-size:.85rem;font-weight:600;color:#446644}
+.artifact .map-div{height:380px;width:100%}
+.map-marker{background:var(--primary);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.tline{padding:.75rem 1rem}
+.tline .ev{display:flex;gap:.75rem;position:relative;padding-bottom:.9rem}
+.tline .ev::before{content:'';position:absolute;left:4.7rem;top:1.2rem;bottom:0;width:2px;background:#c8d8ca}
+.tline .ev:last-child::before{display:none}
+.tline .dt{flex:0 0 4.2rem;text-align:right;font-size:.75rem;color:var(--primary);font-weight:700;font-family:ui-monospace,monospace;padding-top:.1rem}
+.tline .dot{flex:0 0 12px;height:12px;border-radius:50%;background:var(--primary);margin-top:.2rem;z-index:1}
+.tline .ev-body{flex:1;font-size:.88rem;line-height:1.5}
+.tline .ev-body .lbl{font-weight:600}
+.tline .ev-body .dsc{color:#666;font-size:.82rem}
+.tline .ev-body a{color:var(--primary);font-size:.78rem}
 .typing span{width:6px;height:6px;background:#666;border-radius:50%;display:inline-block;animation:t 1.4s infinite}
 .typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}
 @keyframes t{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-4px);opacity:1}}
@@ -71,14 +87,14 @@ const I18N={
      placeholder:'Stellen Sie eine Frage...',send:'Senden',sources:'Quellen:',
      steps:'Recherche-Schritte',hits:'Treffer',error:'Fehler',noanswer:'Keine Antwort.',
      models:{'claude-haiku-4-5':'Haiku (schnell)','claude-sonnet-5':'Sonnet (ausgewogen)','claude-opus-4-8':'Opus (gründlich)'},
-     tools:{lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext'},
+     tools:{lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext',where_was_humboldt:'📅 Chronologie',create_map:'🗺️ Karte',create_timeline:'📈 Zeitleiste',get_document:'📜 Dokument',query_measurements:'📏 Messwerte',code_execution:'🐍 Code'},
      examples:['Welche Messungen machte Humboldt am Königstein?','Wen traf Humboldt in Wien?','Wer war Bonpland?','Was bedeutet "alii dicunt"?']},
  en:{sub:'Alex · Research Assistant',wh:'Ask Alex',
      wp:"I'm Alex — I search Alexander von Humboldt's travel journals, letters and documents.",
      placeholder:'Ask a question...',send:'Send',sources:'Sources:',
      steps:'Research steps',hits:'results',error:'Error',noanswer:'No answer.',
      models:{'claude-haiku-4-5':'Haiku (fast)','claude-sonnet-5':'Sonnet (balanced)','claude-opus-4-8':'Opus (thorough)'},
-     tools:{lookup_entity:'📇 Index',chunks_for_entity:'🔗 Annotated passages',search:'🔍 Search',grep:'⌕ Grep',get_context:'📄 Context'},
+     tools:{lookup_entity:'📇 Index',chunks_for_entity:'🔗 Annotated passages',search:'🔍 Search',grep:'⌕ Grep',get_context:'📄 Context',where_was_humboldt:'📅 Chronology',create_map:'🗺️ Map',create_timeline:'📈 Timeline',get_document:'📜 Document',query_measurements:'📏 Measurements',code_execution:'🐍 Code'},
      examples:['What measurements did Humboldt take at the Königstein?','Whom did Humboldt meet in Vienna?','Who was Bonpland?','What does "alii dicunt" mean?']}
 };
 let LANG=localStorage.getItem('humboldt_lang')||'de';
@@ -108,7 +124,47 @@ function argSummary(tool,inp){
   if(tool==='lookup_entity')return'„'+(inp.name||'')+'“'+(inp.entity_type?' ('+inp.entity_type+')':'');
   if(tool==='chunks_for_entity')return inp.humboldt_id||'';
   if(tool==='get_context')return inp.chunk_id||'';
+  if(tool==='where_was_humboldt')return (inp.date_from||'')+(inp.date_to&&inp.date_to!==inp.date_from?' – '+inp.date_to:'');
+  if(tool==='create_map')return'„'+(inp.title||'')+'“ ('+((inp.stations||[]).length)+' Stationen)';
+  if(tool==='create_timeline')return'„'+(inp.title||'')+'“ ('+((inp.events||[]).length)+')';
+  if(tool==='get_document')return inp.doc_id||'';
+  if(tool==='query_measurements')return[inp.unit,inp.context_contains].filter(Boolean).join(' · ');
+  if(tool==='code_execution')return(inp.code||'').split('\n')[0].slice(0,60);
   return JSON.stringify(inp)}
+function renderArtifact(art,container){
+  const box=document.createElement('div');box.className='artifact';
+  const tt=document.createElement('div');tt.className='a-title';tt.textContent=art.title||'';box.appendChild(tt);
+  container.appendChild(box);
+  if(art.type==='map'&&window.L){
+    const mdiv=document.createElement('div');mdiv.className='map-div';box.appendChild(mdiv);
+    setTimeout(()=>{
+      const map=L.map(mdiv,{scrollWheelZoom:false});
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+      const pts=[];
+      (art.stations||[]).forEach((st,i)=>{
+        const ll=[st.lat,st.lon];pts.push(ll);
+        const ic=L.divIcon({className:'',html:'<div class="map-marker">'+(i+1)+'</div>',iconSize:[22,22],iconAnchor:[11,11]});
+        let pop='<b>'+(i+1)+'. '+esc(st.label)+'</b>';
+        if(st.date)pop+='<br>'+esc(st.date);
+        if(st.url)pop+='<br><a href="'+st.url+'" target="_blank">Register</a>';
+        L.marker(ll,{icon:ic}).addTo(map).bindPopup(pop);
+      });
+      if(art.connect_route&&pts.length>1)L.polyline(pts,{color:'#2c5530',weight:2.5,opacity:.75,dashArray:'6 6'}).addTo(map);
+      if(pts.length)map.fitBounds(pts,{padding:[28,28]});
+    },50);
+  }else if(art.type==='timeline'){
+    const tl=document.createElement('div');tl.className='tline';
+    (art.events||[]).forEach(ev=>{
+      const row=document.createElement('div');row.className='ev';
+      row.innerHTML='<div class="dt">'+esc(ev.date)+'</div><div class="dot"></div>'+
+        '<div class="ev-body"><span class="lbl">'+esc(ev.label)+'</span>'+
+        (ev.description?'<div class="dsc">'+esc(ev.description)+'</div>':'')+
+        (ev.url?'<a href="'+ev.url+'" target="_blank">→ Quelle</a>':'')+'</div>';
+      tl.appendChild(row);
+    });
+    box.appendChild(tl);
+  }
+}
 async function send(){
   const t=q.value.trim();if(!t)return;if(wel)wel.style.display='none';
   add('user',t);q.value='';btn.disabled=true;
@@ -157,6 +213,7 @@ async function send(){
       box.appendChild(traceEl);
       bubble.innerHTML='';bubble.appendChild(box);
       const ans=document.createElement('div');ans.innerHTML=a+s;bubble.appendChild(ans);
+      (d.artifacts||[]).forEach(art=>renderArtifact(art,bubble));
       chat.scrollTop=1e6;
     }else if(ev.type==='error'){
       think.remove();bubble.innerHTML=L.error+': '+esc(ev.message);

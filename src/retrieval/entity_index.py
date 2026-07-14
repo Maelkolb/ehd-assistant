@@ -40,6 +40,8 @@ class EntityIndex:
         self.name_map: dict[str, set[str]] = defaultdict(set)
         # humboldt_id -> list of chunk_ids where the entity is annotated
         self.chunk_index: dict[str, list[str]] = defaultdict(list)
+        # geonames_id -> [lat, lon] (built offline by scripts/enrich_coordinates.py)
+        self.coords: dict[str, list[float]] = {}
 
     # =========================================================================
     # Build
@@ -168,6 +170,21 @@ class EntityIndex:
 
     def chunks_for(self, humboldt_id: str) -> list[str]:
         return list(self.chunk_index.get(humboldt_id, []))
+
+    def coords_for(self, humboldt_id: str) -> tuple[float, float] | None:
+        """(lat, lon) for a place entity, if coordinate enrichment covered it."""
+        rec = self.entities.get(humboldt_id)
+        if not rec:
+            return None
+        pair = self.coords.get(str(rec.get("geonames", "")))
+        return (pair[0], pair[1]) if pair else None
+
+    def load_coords(self, path: str | Path) -> None:
+        path = Path(path)
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                self.coords = json.load(f)
+            logger.info(f"Loaded coordinates for {len(self.coords)} places")
 
     # =========================================================================
     # Persistence

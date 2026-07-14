@@ -26,10 +26,27 @@ class LexicalRetriever:
         # doc_id -> narrative chunk_ids in insertion (= document) order, for
         # neighbor lookup. Editorial notes link via parent_chunk_id instead.
         self.doc_map: dict[str, list[str]] = defaultdict(list)
+        # (date_iso, chunk_id) over dated narrative leaf chunks (chronology,
+        # diaries, letters …), sorted — whereabouts lookups
+        self.date_index: list[tuple[str, str]] = []
+        # flat measurement rows for structured queries
+        self.measurement_index: list[dict] = []
         for cid, chunk in chunk_store.items():
             if chunk.doc_type == "editorial_note" or chunk.doc_type.startswith("register_"):
                 continue
             self.doc_map[chunk.doc_id].append(cid)
+            if chunk.date_iso and not chunk.child_chunk_ids:
+                self.date_index.append((chunk.date_iso, cid))
+            for m in chunk.measurements:
+                self.measurement_index.append({
+                    "value": m.value,
+                    "unit": m.unit,
+                    "value_metric": m.value_metric,
+                    "unit_metric": m.unit_metric,
+                    "context": m.context,
+                    "chunk_id": cid,
+                })
+        self.date_index.sort()
 
     def retrieve(
         self,
@@ -119,6 +136,103 @@ class LexicalRetriever:
                 if len(matches) >= limit:
                     break
         return matches
+
+    def whereabouts(self, date_from: str, date_to: str | None = None, limit: int = 20) -> list[dict]:
+        """
+        Chronology entries in an ISO date range (prefix-tolerant, same
+        semantics as the BM25 date filters). date_to defaults to date_from,
+        so a single month/day works.
+        """
+        date_from = (date_from or "").strip()
+        date_to = (date_to or date_from).strip()
+        if not date_from:
+            return []
+        out = []
+        seen: set[tuple[str, str]] = set()  # one entry per (doc, date)
+        for date_iso, cid in self.date_index:
+            if date_iso < date_from and not date_from.startswith(date_iso):
+                continue
+            if date_iso > date_to and not date_iso.startswith(date_to):
+                break
+            chunk = self.chunk_store[cid]
+            key = (chunk.doc_id, date_iso)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                "chunk_id": cid,
+                "date": date_iso,
+                "doc_type": chunk.doc_type,
+                "citation_label": chunk.citation_label,
+                "text": chunk.text_regularized,
+                "places": [p.name for p in chunk.places],
+                "url": chunk.url,
+            })
+            if len(out) >= limit:
+                break
+        return out
+
+    def get_document(self, doc_id: str, max_chars: int = 7000) -> dict:
+        """Full narrative text of one document, in order, with chunk markers."""
+        chunk_ids = self.doc_map.get(doc_id, [])
+        if not chunk_ids:
+            return {"error": f"Unbekannte doc_id: {doc_id}"}
+
+        leafs = [
+            self.chunk_store[cid] for cid in chunk_ids
+            if not self.chunk_store[cid].child_chunk_ids
+        ]
+        first = leafs[0] if leafs else self.chunk_store[chunk_ids[0]]
+
+        parts, used_ids, total, truncated = [], [], 0, False
+        notes = []
+        for chunk in leafs:
+            seg = chunk.text_regularized
+            if total + len(seg) > max_chars:
+                seg = seg[: max(0, max_chars - total)]
+                truncated = True
+            parts.append(f"[{chunk.chunk_id}" +
+                         (f" | Bl. {chunk.folio_start}" if chunk.folio_start else "") +
+                         (f" | {chunk.date_iso}" if chunk.date_iso else "") +
+                         f"]\n{seg}")
+            used_ids.append(chunk.chunk_id)
+            notes.extend(chunk.editorial_notes)
+            total += len(seg)
+            if truncated:
+                break
+
+        return {
+            "doc_id": doc_id,
+            "doc_title": first.doc_title,
+            "doc_type": first.doc_type,
+            "date": first.date_iso,
+            "url": first.url,
+            "text": "\n\n".join(parts),
+            "chunk_ids": used_ids,
+            "editorial_notes": notes[:10],
+            "truncated": truncated,
+        }
+
+    def query_measurements(
+        self, unit: str | None = None, context_contains: str | None = None, limit: int = 25
+    ) -> list[dict]:
+        """Structured search over parsed <measure> annotations."""
+        needle = (context_contains or "").lower()
+        unit_l = (unit or "").lower()
+        out = []
+        for row in self.measurement_index:
+            if unit_l and unit_l not in row["unit"].lower() \
+                    and unit_l != (row["unit_metric"] or "").lower():
+                continue
+            if needle:
+                chunk = self.chunk_store[row["chunk_id"]]
+                haystack = (row["context"] + " " + chunk.text_regularized).lower()
+                if needle not in haystack:
+                    continue
+            out.append(row)
+            if len(out) >= limit:
+                break
+        return out
 
     def get_context(self, chunk_id: str) -> dict:
         """Neighboring chunks and parent document context for one chunk."""

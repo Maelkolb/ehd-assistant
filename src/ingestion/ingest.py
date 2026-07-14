@@ -251,6 +251,7 @@ class IngestionPipeline:
         entity_path = processed / "entity_index.json"
         if entity_path.exists():
             self.entity_index.load(entity_path)
+        self.entity_index.load_coords(processed / "coordinates.json")
 
 
 # =============================================================================

@@ -16,6 +16,11 @@ Agent loop (Claude + tools, max 4 tool rounds)
    ├─ search(query, doc_type?, date?)→ BM25 over TEXT chunks (registers excluded)
    ├─ grep(pattern, doc_type?)       → regex (exact phrases, measurements)
    ├─ get_context(chunk_id)          → neighboring passages / parent document
+   ├─ where_was_humboldt(date range) → dated chronology/diary entries
+   ├─ get_document(doc_id)           → full document text
+   ├─ query_measurements(unit?, q?)  → structured <measure> annotations (+ metric)
+   ├─ create_map / create_timeline   → interactive Leaflet map / visual timeline in the widget
+   ├─ code_execution (Sonnet/Opus)   → Anthropic server-side Python sandbox (calculations)
    └─ answer with [Quelle N] citations
 ```
 
@@ -30,6 +35,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ./run.sh setup     # install dependencies
 ./run.sh fetch     # clone telota/edition-humboldt-digital @ v11.0.0 (pinned)
 ./run.sh ingest    # build chunk store, BM25 text index, entity index
+./run.sh enrich    # resolve place coordinates via Wikidata (for maps)
 ./run.sh serve     # http://localhost:8000
 ```
 

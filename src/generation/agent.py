@@ -19,9 +19,19 @@ import time
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_ROUNDS = 4
+MAX_TOOL_ROUNDS = 6
 SEARCH_TEXT_CHARS = 700
 CONTEXT_TEXT_CHARS = 1400
+
+# Server-side code execution: only offered on Sonnet/Opus (availability on
+# Haiku unverified); disable entirely with CODE_EXECUTION=0.
+CODE_EXECUTION_TOOL = {"type": "code_execution_20260521", "name": "code_execution"}
+
+
+def _code_execution_enabled(model: str) -> bool:
+    if os.environ.get("CODE_EXECUTION", "1") == "0":
+        return False
+    return model.startswith(("claude-sonnet", "claude-opus"))
 
 SYSTEM_PROMPT = """Du bist Alex, der Rechercheassistent der **edition humboldt digital** \
 (hg. v. Ottmar Ette, Berlin-Brandenburgische Akademie der Wissenschaften) — der digitalen \
@@ -40,11 +50,28 @@ zur Verfügung:
 - `grep`: Regex-Suche für exakte Wortformen, Messwerte, Zahlen, Einheiten.
 - `get_context`: Nachbarpassagen und Umfeld einer Fundstelle laden.
 
+Außerdem:
+- `where_was_humboldt`: Aufenthaltsorte in einem Datumsbereich (aus der Chronologie der \
+  Edition) — das bevorzugte Werkzeug für "Wo war Humboldt am/im …?" und zum Sammeln von \
+  Reisestationen.
+- `create_map`: erzeugt eine interaktive Karte, die dem Nutzer angezeigt wird. Übergib \
+  Stationen in Reihenfolge (Ortsname wie im Register); Koordinaten werden automatisch \
+  aufgelöst. Nutze es IMMER, wenn nach einer Karte gefragt wird.
+- `create_timeline`: erzeugt eine visuelle Zeitleiste (Datum + Ereignis), die dem Nutzer \
+  angezeigt wird — für Reiseverläufe, Ereignisfolgen, Lebensstationen.
+- `get_document`: den vollständigen Text eines Dokuments (Brief, Tagebuchabschnitt) laden — \
+  für Zusammenfassungen ganzer Dokumente.
+- `query_measurements`: strukturierte Suche in den von den Herausgebern ausgezeichneten \
+  Messwerten (Wert, historische Einheit, metrische Umrechnung).
+- `code_execution` (falls verfügbar): Python-Sandbox OHNE Internetzugang — nur für \
+  Berechnungen, Umrechnungen, Statistik. NIE für Karten (dafür gibt es create_map).
+
 Empfohlene Strategie:
 1. Bei Fragen zu Personen/Orten: zuerst `lookup_entity`, dann `chunks_for_entity`.
 2. Bei thematischen Fragen: `search`, ggf. mit Datums-/Typfiltern.
-3. Bei Fragen zu Messungen oder exakten Formulierungen: `grep`.
-4. Historische Schreibweisen beachten: Die Texte sind in Deutsch, Französisch und Spanisch \
+3. Bei Itinerar-/Reisefragen: `where_was_humboldt`; für Kartenwünsche danach `create_map`.
+4. Bei Fragen zu Messungen: `query_measurements`, ergänzend `grep`.
+5. Historische Schreibweisen beachten: Die Texte sind in Deutsch, Französisch und Spanisch \
    des 18./19. Jahrhunderts verfasst. Probiere bei `search`/`grep` auch zeitgenössische \
    Varianten (z. B. "Crocodile"/"Cocodrilo" statt "Krokodil").
 Du hast maximal {max_rounds} Werkzeugrunden — recherchiere gezielt, nicht erschöpfend.
@@ -154,6 +181,108 @@ TOOLS = [
             "required": ["chunk_id"],
         },
     },
+    {
+        "name": "where_was_humboldt",
+        "description": (
+            "Aufenthaltsorte und Ereignisse in einem Datumsbereich, direkt aus der "
+            "Chronologie der Edition. Bevorzugt für 'Wo war Humboldt am/im …?' und "
+            "zum Sammeln von Reisestationen für Karten."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date_from": {"type": "string", "description": "ISO-Datum oder -Präfix, z. B. '1801-03' oder '1805-04-12'"},
+                "date_to": {"type": "string", "description": "Optional: Ende des Bereichs (Standard = date_from)"},
+                "limit": {"type": "integer", "description": "Max. Einträge (Standard 20)"},
+            },
+            "required": ["date_from"],
+        },
+    },
+    {
+        "name": "create_map",
+        "description": (
+            "Erzeugt eine interaktive Karte, die dem Nutzer unter der Antwort angezeigt "
+            "wird. Übergib die Stationen in Reihenfolge; Koordinaten werden aus dem "
+            "Ortsregister aufgelöst. Nicht auflösbare Orte werden zurückgemeldet."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Kartentitel"},
+                "stations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Ortsname (Registerschreibweise bevorzugt)"},
+                            "humboldt_id": {"type": "string", "description": "Optional: Register-ID, wenn bekannt (präziser)"},
+                            "label": {"type": "string", "description": "Optional: Beschriftung (Standard: Ortsname)"},
+                            "date": {"type": "string", "description": "Optional: Datum der Station"},
+                        },
+                        "required": ["name"],
+                    },
+                },
+                "connect_route": {"type": "boolean", "description": "Stationen als Route verbinden (Standard true)"},
+            },
+            "required": ["title", "stations"],
+        },
+    },
+    {
+        "name": "create_timeline",
+        "description": (
+            "Erzeugt eine visuelle Zeitleiste, die dem Nutzer unter der Antwort angezeigt "
+            "wird — für Reiseverläufe, Ereignisfolgen, Lebensstationen."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Titel der Zeitleiste"},
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "date": {"type": "string", "description": "ISO-Datum oder lesbare Angabe"},
+                            "label": {"type": "string", "description": "Ereignis (kurz)"},
+                            "description": {"type": "string", "description": "Optional: Details"},
+                            "url": {"type": "string", "description": "Optional: Quellen-Link"},
+                        },
+                        "required": ["date", "label"],
+                    },
+                },
+            },
+            "required": ["title", "events"],
+        },
+    },
+    {
+        "name": "get_document",
+        "description": (
+            "Lädt den vollständigen Text eines Dokuments (Brief, Tagebuchabschnitt, "
+            "Dokument) anhand seiner doc_id — für Zusammenfassungen ganzer Dokumente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "doc_id": {"type": "string", "description": "Dokument-ID, z. B. 'H0000003'"},
+            },
+            "required": ["doc_id"],
+        },
+    },
+    {
+        "name": "query_measurements",
+        "description": (
+            "Strukturierte Suche in den von den Herausgebern ausgezeichneten Messwerten "
+            "(Wert, historische Einheit wie toise/pied_de_roi, metrische Umrechnung, Kontext)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "unit": {"type": "string", "description": "Optional: Einheit filtern (z. B. 'toise', 'meter')"},
+                "context_contains": {"type": "string", "description": "Optional: Stichwort im Kontext/Text (z. B. 'Chimborazo')"},
+                "limit": {"type": "integer", "description": "Max. Zeilen (Standard 25)"},
+            },
+        },
+    },
 ]
 
 
@@ -194,19 +323,29 @@ class AgenticAnswerer:
         sources: dict[str, int] = {}   # chunk_id -> quelle_nr
         source_meta: dict[int, dict] = {}
         trace: list[dict] = []
+        artifacts: list[dict] = []     # maps/timelines for the frontend
+
+        tools = list(TOOLS)
+        if _code_execution_enabled(active_model):
+            tools.append(CODE_EXECUTION_TOOL)
 
         messages = [{"role": "user", "content": query}]
         system = SYSTEM_PROMPT.format(max_rounds=MAX_TOOL_ROUNDS)
 
         response = None
-        for round_no in range(MAX_TOOL_ROUNDS + 1):
-            force_answer = round_no == MAX_TOOL_ROUNDS
+        rounds_used = 0
+        iterations = 0
+        while True:
+            iterations += 1
+            # pause_turn continuations don't consume the budget; the iteration
+            # cap prevents a pathological pause loop.
+            force_answer = rounds_used >= MAX_TOOL_ROUNDS or iterations > MAX_TOOL_ROUNDS * 3
             kwargs = dict(
                 model=active_model,
                 max_tokens=max_tokens,
                 system=system,
                 messages=messages,
-                tools=TOOLS,
+                tools=tools,
             )
             if force_answer:
                 kwargs["tool_choice"] = {"type": "none"}
@@ -215,13 +354,44 @@ class AgenticAnswerer:
                     "content": "Werkzeugbudget erschöpft. Beantworte die Frage jetzt "
                                "auf Basis der bisherigen Ergebnisse (mit [Quelle N]).",
                 })
-                kwargs["messages"] = messages
 
-            response = self.client.messages.create(**kwargs)
+            try:
+                response = self.client.messages.create(**kwargs)
+            except Exception as e:
+                # graceful degradation if the model rejects the server tool
+                if CODE_EXECUTION_TOOL in tools and "code_execution" in str(e):
+                    logger.warning(f"code_execution rejected on {active_model}, retrying without: {e}")
+                    tools = [t for t in tools if t is not CODE_EXECUTION_TOOL]
+                    kwargs["tools"] = tools
+                    response = self.client.messages.create(**kwargs)
+                else:
+                    raise
+
+            # surface server-side tool activity (code execution) in the trace
+            for block in response.content:
+                btype = getattr(block, "type", "")
+                if btype == "server_tool_use":
+                    code = ""
+                    if isinstance(getattr(block, "input", None), dict):
+                        code = block.input.get("command") or block.input.get("code") or ""
+                    yield {"type": "tool_call", "round": rounds_used + 1,
+                           "tool": "code_execution", "input": {"code": code[:300]}}
+                    trace.append({"round": rounds_used + 1, "tool": "code_execution",
+                                  "input": {"code": code[:300]}, "n_results": 1})
+                elif btype == "bash_code_execution_tool_result":
+                    content = getattr(block, "content", None)
+                    stdout = getattr(content, "stdout", "") or getattr(content, "stderr", "") or ""
+                    yield {"type": "tool_result", "tool": "code_execution",
+                           "n": 1, "preview": [stdout[:120]]}
+
+            if response.stop_reason == "pause_turn":
+                messages.append({"role": "assistant", "content": response.content})
+                continue
 
             if response.stop_reason != "tool_use":
                 break
 
+            rounds_used += 1
             messages.append({"role": "assistant", "content": response.content})
             tool_results = []
             for block in response.content:
@@ -229,13 +399,13 @@ class AgenticAnswerer:
                     continue
                 yield {
                     "type": "tool_call",
-                    "round": round_no + 1,
+                    "round": rounds_used,
                     "tool": block.name,
                     "input": block.input,
                 }
-                result = self._dispatch(block.name, block.input, sources, source_meta)
+                result = self._dispatch(block.name, block.input, sources, source_meta, artifacts)
                 trace.append({
-                    "round": round_no + 1,
+                    "round": rounds_used,
                     "tool": block.name,
                     "input": block.input,
                     "n_results": result.get("n", 0),
@@ -274,6 +444,7 @@ class AgenticAnswerer:
                                "url": s["url"]} for s in cited],
                 "model": active_model,
                 "trace": trace,
+                "artifacts": artifacts,
                 "elapsed_s": elapsed,
             },
         }
@@ -298,7 +469,10 @@ class AgenticAnswerer:
     # Tool dispatch
     # =========================================================================
 
-    def _dispatch(self, name: str, tool_input: dict, sources: dict, source_meta: dict) -> dict:
+    def _dispatch(self, name: str, tool_input: dict, sources: dict, source_meta: dict,
+                  artifacts: list | None = None) -> dict:
+        if artifacts is None:
+            artifacts = []
         try:
             if name == "lookup_entity":
                 payload = self._tool_lookup_entity(tool_input, sources, source_meta)
@@ -310,6 +484,16 @@ class AgenticAnswerer:
                 payload = self._tool_grep(tool_input, sources, source_meta)
             elif name == "get_context":
                 payload = self._tool_get_context(tool_input, sources, source_meta)
+            elif name == "where_was_humboldt":
+                payload = self._tool_whereabouts(tool_input, sources, source_meta)
+            elif name == "create_map":
+                payload = self._tool_create_map(tool_input, artifacts)
+            elif name == "create_timeline":
+                payload = self._tool_create_timeline(tool_input, artifacts)
+            elif name == "get_document":
+                payload = self._tool_get_document(tool_input, sources, source_meta)
+            elif name == "query_measurements":
+                payload = self._tool_query_measurements(tool_input, sources, source_meta)
             else:
                 payload = {"error": f"Unbekanntes Werkzeug: {name}"}
         except Exception as e:
@@ -447,6 +631,126 @@ class AgenticAnswerer:
         ctx["quelle_nr"] = nr
         ctx["text"] = ctx["text"][:CONTEXT_TEXT_CHARS]
         return ctx
+
+    def _tool_whereabouts(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
+        entries = self.retriever.whereabouts(
+            date_from=tool_input.get("date_from", ""),
+            date_to=tool_input.get("date_to"),
+            limit=int(tool_input.get("limit") or 20),
+        )
+        if not entries:
+            return {"error": "Keine Chronologie-Einträge in diesem Zeitraum. "
+                             "Versuche einen breiteren Bereich (z. B. nur Jahr-Monat)."}
+        out = []
+        for e in entries:
+            nr = self._register_source(e["chunk_id"], sources, source_meta)
+            out.append({
+                "quelle_nr": nr,
+                "datum": e["date"],
+                "typ": e["doc_type"],
+                "text": e["text"][:400],
+                "orte": e["places"][:6],
+                "url": e["url"],
+            })
+        return out
+
+    def _tool_create_map(self, tool_input: dict, artifacts: list) -> dict:
+        stations_in = tool_input.get("stations") or []
+        title = tool_input.get("title") or "Karte"
+        resolved, unresolved = [], []
+        for st in stations_in:
+            if not isinstance(st, dict):
+                continue
+            hid = (st.get("humboldt_id") or "").strip()
+            name = (st.get("name") or "").strip()
+            ent = None
+            if hid and hid in self.entity_index.entities:
+                ent = self.entity_index.entities[hid]
+            elif name:
+                hits = self.entity_index.lookup(name, entity_type="place", limit=1)
+                ent = hits[0] if hits else None
+            coords = self.entity_index.coords_for(ent["id"]) if ent else None
+            if coords:
+                resolved.append({
+                    "label": st.get("label") or (ent["name"] if ent else name),
+                    "lat": coords[0],
+                    "lon": coords[1],
+                    "date": st.get("date", ""),
+                    "url": ent.get("url", "") if ent else "",
+                })
+            else:
+                unresolved.append(name or hid)
+        if not resolved:
+            return {"error": "Keine Station konnte zu Koordinaten aufgelöst werden. "
+                             "Prüfe die Ortsnamen (Registerschreibweise) mit lookup_entity."}
+        artifacts.append({
+            "type": "map",
+            "title": title,
+            "connect_route": bool(tool_input.get("connect_route", True)),
+            "stations": resolved,
+        })
+        result = {
+            "ok": True,
+            "hinweis": f"Karte „{title}“ mit {len(resolved)} Stationen wird dem Nutzer "
+                       "unter deiner Antwort angezeigt. Erwähne sie kurz, beschreibe sie "
+                       "aber nicht Station für Station.",
+        }
+        if unresolved:
+            result["nicht_aufgeloest"] = unresolved
+        return result
+
+    def _tool_create_timeline(self, tool_input: dict, artifacts: list) -> dict:
+        events_in = tool_input.get("events") or []
+        title = tool_input.get("title") or "Zeitleiste"
+        events = [
+            {
+                "date": str(e.get("date", "")).strip(),
+                "label": str(e.get("label", "")).strip(),
+                "description": str(e.get("description", "")).strip(),
+                "url": str(e.get("url", "")).strip(),
+            }
+            for e in events_in
+            if isinstance(e, dict) and e.get("date") and e.get("label")
+        ]
+        if not events:
+            return {"error": "Keine gültigen Ereignisse (date + label erforderlich)."}
+        events.sort(key=lambda e: e["date"])
+        artifacts.append({"type": "timeline", "title": title, "events": events})
+        return {
+            "ok": True,
+            "hinweis": f"Zeitleiste „{title}“ mit {len(events)} Ereignissen wird dem "
+                       "Nutzer unter deiner Antwort angezeigt.",
+        }
+
+    def _tool_get_document(self, tool_input: dict, sources: dict, source_meta: dict) -> dict:
+        doc = self.retriever.get_document(tool_input.get("doc_id", ""))
+        if "error" in doc:
+            return doc
+        anchor = doc["chunk_ids"][0] if doc["chunk_ids"] else None
+        if anchor:
+            doc["quelle_nr"] = self._register_source(anchor, sources, source_meta)
+        return doc
+
+    def _tool_query_measurements(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
+        rows = self.retriever.query_measurements(
+            unit=tool_input.get("unit"),
+            context_contains=tool_input.get("context_contains"),
+            limit=int(tool_input.get("limit") or 25),
+        )
+        if not rows:
+            return {"error": "Keine Messwerte gefunden. Versuche es ohne Filter oder mit "
+                             "grep nach Zahlen+Einheit im Text."}
+        out = []
+        for r in rows:
+            nr = self._register_source(r["chunk_id"], sources, source_meta)
+            out.append({
+                "quelle_nr": nr,
+                "wert": r["value"],
+                "einheit": r["unit"],
+                "metrisch": f"{r['value_metric']} {r['unit_metric']}" if r["value_metric"] is not None else "",
+                "kontext": r["context"][:150],
+            })
+        return out
 
     # =========================================================================
     # Citations

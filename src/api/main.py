@@ -216,6 +216,7 @@ class ChatResponse(BaseModel):
     model: str
     chunks_retrieved: int
     trace: list[dict] = []
+    artifacts: list[dict] = []  # maps/timelines rendered by the widget
 
 class SearchRequest(BaseModel):
     query: str
@@ -262,6 +263,7 @@ async def chat(request: ChatRequest):
             model=result["model"],
             chunks_retrieved=len(result["sources"]),
             trace=result.get("trace", []),
+            artifacts=result.get("artifacts", []),
         )
 
     # --- legacy one-shot path ---
