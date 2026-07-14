@@ -1,6 +1,6 @@
-# Humboldt Retrieval System
+# Alex — ehd-assistant
 
-A domain-specific chatbot for the **edition humboldt digital** — the digital edition of Alexander von Humboldt's diaries, letters, documents and chronology (Berlin-Brandenburgische Akademie der Wissenschaften).
+**Alex** is a domain-specific research assistant for the **edition humboldt digital** — the digital edition of Alexander von Humboldt's diaries, letters, documents and chronology (Berlin-Brandenburgische Akademie der Wissenschaften).
 
 Retrieval is **agentic and lexical**: Claude drives structured search tools built from the edition's own TEI annotations. There is no embedding/vector leg — the editors already solved spelling variance through entity annotation, which beats both embeddings and raw grep for this corpus. See `PLAN.md` for the full rationale.
 

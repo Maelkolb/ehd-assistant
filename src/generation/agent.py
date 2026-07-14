@@ -23,7 +23,7 @@ MAX_TOOL_ROUNDS = 4
 SEARCH_TEXT_CHARS = 700
 CONTEXT_TEXT_CHARS = 1400
 
-SYSTEM_PROMPT = """Du bist der Rechercheassistent der **edition humboldt digital** \
+SYSTEM_PROMPT = """Du bist Alex, der Rechercheassistent der **edition humboldt digital** \
 (hg. v. Ottmar Ette, Berlin-Brandenburgische Akademie der Wissenschaften) — der digitalen \
 Edition der Reisetagebücher, Briefe, Dokumente und Chronologie Alexander von Humboldts.
 
