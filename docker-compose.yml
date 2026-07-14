@@ -6,7 +6,7 @@ services:
     environment:
       - DATA_DIR=/app/data
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - LLM_MODEL=${LLM_MODEL:-claude-sonnet-5}
+      - LLM_MODEL=${LLM_MODEL:-claude-haiku-4-5}
       - RETRIEVAL_MODE=${RETRIEVAL_MODE:-agentic}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
     volumes:

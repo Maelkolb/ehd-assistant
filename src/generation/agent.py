@@ -164,7 +164,9 @@ class AgenticAnswerer:
                  model: str | None = None):
         import anthropic
         self.client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-        self.model = model or os.environ.get("LLM_MODEL", "claude-sonnet-5")
+        # Haiku by default: the public widget optimizes for cost/latency;
+        # stronger models are selectable per request (see main.ALLOWED_MODELS).
+        self.model = model or os.environ.get("LLM_MODEL", "claude-haiku-4-5")
         self.retriever = retriever
         self.entity_index = entity_index
 
@@ -172,15 +174,15 @@ class AgenticAnswerer:
     # Public API
     # =========================================================================
 
-    def generate(self, query: str, max_tokens: int = 3000) -> dict:
+    def generate(self, query: str, max_tokens: int = 3000, model: str | None = None) -> dict:
         """Run the loop to completion and return the final answer dict."""
         final = {}
-        for event in self.iter_events(query, max_tokens=max_tokens):
+        for event in self.iter_events(query, max_tokens=max_tokens, model=model):
             if event["type"] == "answer":
                 final = event["data"]
         return final
 
-    def iter_events(self, query: str, max_tokens: int = 3000):
+    def iter_events(self, query: str, max_tokens: int = 3000, model: str | None = None):
         """
         Run the agent loop, yielding progress events as they happen:
           {"type": "tool_call",   "round": n, "tool": ..., "input": {...}}
@@ -188,6 +190,7 @@ class AgenticAnswerer:
           {"type": "answer",      "data": {answer, sources, citations, model, trace, elapsed_s}}
         """
         t0 = time.time()
+        active_model = model or self.model
         sources: dict[str, int] = {}   # chunk_id -> quelle_nr
         source_meta: dict[int, dict] = {}
         trace: list[dict] = []
@@ -199,7 +202,7 @@ class AgenticAnswerer:
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             force_answer = round_no == MAX_TOOL_ROUNDS
             kwargs = dict(
-                model=self.model,
+                model=active_model,
                 max_tokens=max_tokens,
                 system=system,
                 messages=messages,
@@ -269,7 +272,7 @@ class AgenticAnswerer:
                 "sources": cited or list(source_meta.values())[:8],
                 "citations": [{"index": s["index"], "citation_label": s["citation_label"],
                                "url": s["url"]} for s in cited],
-                "model": self.model,
+                "model": active_model,
                 "trace": trace,
                 "elapsed_s": elapsed,
             },

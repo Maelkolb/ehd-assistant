@@ -38,7 +38,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 | Variable | Default | Notes |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | required for generation |
-| `LLM_MODEL` | `claude-sonnet-5` | Claude model ID |
+| `LLM_MODEL` | `claude-haiku-4-5` | Claude model ID (widget can select Sonnet/Opus) |
 | `RETRIEVAL_MODE` | `agentic` | `oneshot` = legacy pipeline |
 | `CORS_ORIGINS` | `*` (logs a warning) | comma-separated allowlist for production |
 | `GEMINI_MODEL` | — | only if falling back to Vertex AI; env-only by design |

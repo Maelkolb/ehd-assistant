@@ -48,6 +48,19 @@ generator: AnswerGenerator | MockGenerator | None = None
 agent = None  # AgenticAnswerer when Claude is available
 generation_healthy: bool = False
 
+# Models selectable from the public widget. Requests with anything else
+# fall back to the default (first entry / LLM_MODEL).
+ALLOWED_MODELS = {
+    "claude-haiku-4-5": "Haiku 4.5 (schnell)",
+    "claude-sonnet-5": "Sonnet 5 (ausgewogen)",
+    "claude-opus-4-8": "Opus 4.8 (gründlich)",
+}
+
+
+def _validated_model(requested: str | None) -> str | None:
+    """Return the requested model if allowlisted, else None (= agent default)."""
+    return requested if requested in ALLOWED_MODELS else None
+
 
 def _generation_health_check(gen) -> None:
     """Fire one tiny generation call and log loudly on failure."""
@@ -184,6 +197,7 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     query: str = Field(..., description="User question about Alexander von Humboldt")
+    model: str | None = Field(default=None, description="Claude model (must be allowlisted)")
     top_k: int = Field(default=6, ge=1, le=20, description="Number of sources to retrieve")
     use_vector: bool = Field(default=True, description="Use semantic search")
     use_bm25: bool = Field(default=True, description="Use keyword search")
@@ -232,7 +246,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(500, "System not initialized")
 
     if agent is not None:
-        result = agent.generate(request.query)
+        result = agent.generate(request.query, model=_validated_model(request.model))
         return ChatResponse(
             answer=result["answer"],
             sources=[
@@ -337,7 +351,7 @@ async def chat_stream(request: ChatRequest):
 
     def event_source():
         try:
-            for event in agent.iter_events(request.query):
+            for event in agent.iter_events(request.query, model=_validated_model(request.model)):
                 yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.exception("chat_stream failed")

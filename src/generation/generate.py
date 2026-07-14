@@ -135,7 +135,7 @@ class AnswerGenerator:
     ):
         import os
         if model is None:
-            model = os.environ.get("LLM_MODEL", "claude-sonnet-5")
+            model = os.environ.get("LLM_MODEL", "claude-haiku-4-5")
         self.provider = provider
         self.model = model
 

@@ -15,7 +15,7 @@ class Config:
 
     # === LLM ===
     llm_provider: str = os.environ.get("LLM_PROVIDER", "anthropic")  # "anthropic", "openai", or "gemini"
-    llm_model: str = os.environ.get("LLM_MODEL", "claude-sonnet-5")
+    llm_model: str = os.environ.get("LLM_MODEL", "claude-haiku-4-5")
     # Gemini model is env-only on purpose: hardcoded defaults rotted twice
     # (gemini-2.0-flash retired 2026-06-01, gemini-2.5-flash retires 2026-10-16).
     gemini_model: str = os.environ.get("GEMINI_MODEL", "")

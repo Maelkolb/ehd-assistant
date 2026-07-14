@@ -36,6 +36,8 @@ details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-fami
 .input-wrap{max-width:800px;margin:0 auto;display:flex;gap:.75rem}
 .input-wrap input{flex:1;padding:.75rem 1rem;border:1px solid var(--border);border-radius:.75rem;font-family:inherit;font-size:1rem;outline:none}
 .input-wrap input:focus{border-color:var(--primary)}
+.input-wrap select{padding:.75rem .5rem;border:1px solid var(--border);border-radius:.75rem;font-family:inherit;font-size:.85rem;background:#fff;color:#555;outline:none;cursor:pointer;max-width:11rem}
+.input-wrap select:focus{border-color:var(--primary)}
 .input-wrap button{padding:.75rem 1.5rem;background:var(--primary);color:#fff;border:none;border-radius:.75rem;font-family:inherit;font-size:1rem;cursor:pointer}
 .input-wrap button:disabled{opacity:.5}
 .welcome{text-align:center;padding:3rem 1rem;color:#666}
@@ -57,6 +59,11 @@ details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-fami
 <button onclick="ask(this)">Was bedeutet "alii dicunt"?</button>
 </div></div></div>
 <div class="input-area"><div class="input-wrap">
+<select id="model" title="Claude-Modell">
+<option value="claude-haiku-4-5" selected>Haiku (schnell)</option>
+<option value="claude-sonnet-5">Sonnet (ausgewogen)</option>
+<option value="claude-opus-4-8">Opus (gründlich)</option>
+</select>
 <input id="q" placeholder="Stellen Sie eine Frage..." onkeydown="if(event.key==='Enter')send()" autofocus>
 <button id="btn" onclick="send()">Senden</button>
 </div></div>
@@ -82,7 +89,8 @@ async function send(){
   const think=document.createElement('div');think.className='typing';think.innerHTML='<span></span><span></span><span></span>';bubble.appendChild(think);
   let pendingLine=null;
   try{
-    const r=await fetch(API+'/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:t})});
+    const model=document.getElementById('model').value;
+    const r=await fetch(API+'/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:t,model:model})});
     if(!r.ok)throw new Error('HTTP '+r.status);
     const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
     while(true){
@@ -116,7 +124,7 @@ async function send(){
       if(d.sources&&d.sources.length){s='<div class="sources"><b>Quellen:</b><br>';d.sources.forEach(x=>{const l=x.citation_label||'Quelle '+x.index;s+=`[${x.index}] ${x.url?'<a href="'+x.url+'" target="_blank">'+esc(l)+'</a>':esc(l)}<br>`});s+='</div>'}
       const steps=traceEl.childNodes.length;
       const box=document.createElement('details');box.className='trace-box';
-      box.innerHTML='<summary>🔎 Recherche-Schritte ('+steps+') · '+(d.elapsed_s||'?')+'s</summary>';
+      box.innerHTML='<summary>🔎 Recherche-Schritte ('+steps+') · '+(d.elapsed_s||'?')+'s · '+esc(d.model||'')+'</summary>';
       box.appendChild(traceEl);
       bubble.innerHTML='';bubble.appendChild(box);
       const ans=document.createElement('div');ans.innerHTML=a+s;bubble.appendChild(ans);
