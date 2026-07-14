@@ -8,9 +8,11 @@
 :root{--primary:#2c5530;--bg:#fafaf8;--text:#2a2a2a;--border:#ddd}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Georgia,serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column}
-header{background:var(--primary);color:#fff;padding:1rem 1.5rem}
+header{background:var(--primary);color:#fff;padding:1rem 1.5rem;display:flex;justify-content:space-between;align-items:center}
 header h1{font-size:1.2rem;font-weight:500}
 header .sub{font-size:.85rem;opacity:.8;font-style:italic}
+.lang-btn{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.4);color:#fff;padding:.35rem .8rem;border-radius:2rem;font-family:inherit;font-size:.8rem;cursor:pointer}
+.lang-btn:hover{background:rgba(255,255,255,.25)}
 .chat{flex:1;overflow-y:auto;padding:1.5rem;max-width:800px;margin:0 auto;width:100%}
 .msg{margin-bottom:1.5rem;animation:fadeIn .3s}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
@@ -47,29 +49,55 @@ details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-fami
 </style>
 </head>
 <body>
-<header><h1>edition humboldt digital</h1><div class="sub">Forschungsassistent</div></header>
+<header>
+<div><h1>edition humboldt digital</h1><div class="sub" id="sub"></div></div>
+<button class="lang-btn" id="langbtn" onclick="toggleLang()"></button>
+</header>
 <div class="chat" id="chat">
 <div class="welcome" id="welcome">
-<h2>Fragen Sie die Quellen</h2>
-<p style="max-width:500px;margin:0 auto 1rem;line-height:1.6">Ich durchsuche die Reisetagebücher, Briefe und Dokumente Alexander von Humboldts.</p>
-<div class="examples">
-<button onclick="ask(this)">Welche Messungen machte Humboldt am Königstein?</button>
-<button onclick="ask(this)">Wen traf Humboldt in Wien?</button>
-<button onclick="ask(this)">Wer war Bonpland?</button>
-<button onclick="ask(this)">Was bedeutet "alii dicunt"?</button>
-</div></div></div>
+<h2 id="wh"></h2>
+<p id="wp" style="max-width:500px;margin:0 auto 1rem;line-height:1.6"></p>
+<div class="examples" id="examples"></div>
+</div></div>
 <div class="input-area"><div class="input-wrap">
-<select id="model" title="Claude-Modell">
-<option value="claude-haiku-4-5" selected>Haiku (schnell)</option>
-<option value="claude-sonnet-5">Sonnet (ausgewogen)</option>
-<option value="claude-opus-4-8">Opus (gründlich)</option>
-</select>
-<input id="q" placeholder="Stellen Sie eine Frage..." onkeydown="if(event.key==='Enter')send()" autofocus>
-<button id="btn" onclick="send()">Senden</button>
+<select id="model" title="Claude"></select>
+<input id="q" onkeydown="if(event.key==='Enter')send()" autofocus>
+<button id="btn" onclick="send()"></button>
 </div></div>
 <script>
+const I18N={
+ de:{sub:'Forschungsassistent',wh:'Fragen Sie die Quellen',
+     wp:'Ich durchsuche die Reisetagebücher, Briefe und Dokumente Alexander von Humboldts.',
+     placeholder:'Stellen Sie eine Frage...',send:'Senden',sources:'Quellen:',
+     steps:'Recherche-Schritte',hits:'Treffer',error:'Fehler',noanswer:'Keine Antwort.',
+     models:{'claude-haiku-4-5':'Haiku (schnell)','claude-sonnet-5':'Sonnet (ausgewogen)','claude-opus-4-8':'Opus (gründlich)'},
+     tools:{lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext'},
+     examples:['Welche Messungen machte Humboldt am Königstein?','Wen traf Humboldt in Wien?','Wer war Bonpland?','Was bedeutet "alii dicunt"?']},
+ en:{sub:'Research Assistant',wh:'Ask the sources',
+     wp:"I search Alexander von Humboldt's travel journals, letters and documents.",
+     placeholder:'Ask a question...',send:'Send',sources:'Sources:',
+     steps:'Research steps',hits:'results',error:'Error',noanswer:'No answer.',
+     models:{'claude-haiku-4-5':'Haiku (fast)','claude-sonnet-5':'Sonnet (balanced)','claude-opus-4-8':'Opus (thorough)'},
+     tools:{lookup_entity:'📇 Index',chunks_for_entity:'🔗 Annotated passages',search:'🔍 Search',grep:'⌕ Grep',get_context:'📄 Context'},
+     examples:['What measurements did Humboldt take at the Königstein?','Whom did Humboldt meet in Vienna?','Who was Bonpland?','What does "alii dicunt" mean?']}
+};
+let LANG=localStorage.getItem('humboldt_lang')||'de';
 const API=window.location.origin,chat=document.getElementById('chat'),q=document.getElementById('q'),btn=document.getElementById('btn'),wel=document.getElementById('welcome');
-const TOOL_LABEL={lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext'};
+function T(){return I18N[LANG]}
+function applyLang(){
+  const t=T();document.documentElement.lang=LANG;
+  document.getElementById('sub').textContent=t.sub;
+  document.getElementById('langbtn').textContent=LANG==='de'?'English':'Deutsch';
+  document.getElementById('wh').textContent=t.wh;
+  document.getElementById('wp').textContent=t.wp;
+  q.placeholder=t.placeholder;btn.textContent=t.send;
+  const ex=document.getElementById('examples');ex.innerHTML='';
+  t.examples.forEach(x=>{const b=document.createElement('button');b.textContent=x;b.onclick=()=>ask(b);ex.appendChild(b)});
+  const sel=document.getElementById('model'),cur=sel.value||'claude-haiku-4-5';sel.innerHTML='';
+  Object.entries(t.models).forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;if(v===cur)o.selected=true;sel.appendChild(o)});
+}
+function toggleLang(){LANG=LANG==='de'?'en':'de';localStorage.setItem('humboldt_lang',LANG);applyLang()}
+applyLang();
 function ask(b){q.value=b.textContent;send()}
 function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
 function add(r,h){const d=document.createElement('div');d.className='msg '+r;d.innerHTML='<div class="b">'+(r==='user'?esc(h):h)+'</div>';chat.appendChild(d);chat.scrollTop=1e6;return d}
@@ -84,6 +112,7 @@ function argSummary(tool,inp){
 async function send(){
   const t=q.value.trim();if(!t)return;if(wel)wel.style.display='none';
   add('user',t);q.value='';btn.disabled=true;
+  const L=T();
   const bot=add('bot','');const bubble=bot.querySelector('.b');
   const traceEl=document.createElement('div');traceEl.className='trace';bubble.appendChild(traceEl);
   const think=document.createElement('div');think.className='typing';think.innerHTML='<span></span><span></span><span></span>';bubble.appendChild(think);
@@ -102,35 +131,35 @@ async function send(){
         handle(JSON.parse(raw.slice(6)));
       }
     }
-  }catch(e){bubble.innerHTML='Fehler: '+esc(e.message)}
+  }catch(e){bubble.innerHTML=L.error+': '+esc(e.message)}
   btn.disabled=false;q.focus();
 
   function handle(ev){
     if(ev.type==='tool_call'){
       pendingLine=document.createElement('span');pendingLine.className='tl pending';
-      pendingLine.innerHTML='<span class="tool">'+(TOOL_LABEL[ev.tool]||ev.tool)+'</span> <span class="args">'+esc(argSummary(ev.tool,ev.input))+'</span>';
+      pendingLine.innerHTML='<span class="tool">'+(L.tools[ev.tool]||ev.tool)+'</span> <span class="args">'+esc(argSummary(ev.tool,ev.input))+'</span>';
       traceEl.appendChild(pendingLine);chat.scrollTop=1e6;
     }else if(ev.type==='tool_result'){
       if(pendingLine){pendingLine.classList.remove('pending');
         const res=document.createElement('span');res.className='res';
-        res.textContent=' → '+ev.n+' Treffer'+(ev.preview&&ev.preview.length?': '+ev.preview.slice(0,2).join(' · '):'');
+        res.textContent=' → '+ev.n+' '+L.hits+(ev.preview&&ev.preview.length?': '+ev.preview.slice(0,2).join(' · '):'');
         pendingLine.appendChild(res);pendingLine=null}
       chat.scrollTop=1e6;
     }else if(ev.type==='answer'){
       const d=ev.data;think.remove();
-      let a=(d.answer||'Keine Antwort.').replace(/\[Quelle[n]?\s+([\d,\s und]+)\]/g,'<span class="src-ref">[Quelle $1]</span>');
+      let a=(d.answer||L.noanswer).replace(/\[(?:Quelle[n]?|Sources?)\s+[\d,\s und]+\]/g,'<span class="src-ref">$&</span>');
       a=a.replace(/^### (.*)$/gm,'<b>$1</b>').replace(/^## (.*)$/gm,'<b>$1</b>').replace(/^# (.*)$/gm,'<b>$1</b>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
       let s='';
-      if(d.sources&&d.sources.length){s='<div class="sources"><b>Quellen:</b><br>';d.sources.forEach(x=>{const l=x.citation_label||'Quelle '+x.index;s+=`[${x.index}] ${x.url?'<a href="'+x.url+'" target="_blank">'+esc(l)+'</a>':esc(l)}<br>`});s+='</div>'}
+      if(d.sources&&d.sources.length){s='<div class="sources"><b>'+L.sources+'</b><br>';d.sources.forEach(x=>{const l=x.citation_label||'#'+x.index;s+=`[${x.index}] ${x.url?'<a href="'+x.url+'" target="_blank">'+esc(l)+'</a>':esc(l)}<br>`});s+='</div>'}
       const steps=traceEl.childNodes.length;
       const box=document.createElement('details');box.className='trace-box';
-      box.innerHTML='<summary>🔎 Recherche-Schritte ('+steps+') · '+(d.elapsed_s||'?')+'s · '+esc(d.model||'')+'</summary>';
+      box.innerHTML='<summary>🔎 '+L.steps+' ('+steps+') · '+(d.elapsed_s||'?')+'s · '+esc(d.model||'')+'</summary>';
       box.appendChild(traceEl);
       bubble.innerHTML='';bubble.appendChild(box);
       const ans=document.createElement('div');ans.innerHTML=a+s;bubble.appendChild(ans);
       chat.scrollTop=1e6;
     }else if(ev.type==='error'){
-      think.remove();bubble.innerHTML='Fehler: '+esc(ev.message);
+      think.remove();bubble.innerHTML=L.error+': '+esc(ev.message);
     }
   }
 }
