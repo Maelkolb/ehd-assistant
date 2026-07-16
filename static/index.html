@@ -30,19 +30,32 @@ header .sub{font-size:.85rem;opacity:.8;font-style:italic}
 .cite-chip.ed{background:#faf3e0;border-color:#e0d0a8;color:#8a6d1a}
 .sp-open-btn{background:none;border:none;cursor:pointer;font-size:.85rem;padding:0 .25rem;opacity:.55}
 .sp-open-btn:hover{opacity:1}
-#spanel{position:fixed;top:0;right:0;bottom:0;width:min(480px,92vw);background:#fff;border-left:1px solid var(--border);box-shadow:-4px 0 18px rgba(0,0,0,.12);transform:translateX(102%);transition:transform .25s;z-index:1000;display:flex;flex-direction:column}
+#sp-backdrop{position:fixed;inset:0;background:rgba(22,32,24,.3);opacity:0;pointer-events:none;transition:opacity .25s;z-index:999}
+#sp-backdrop.open{opacity:1;pointer-events:auto}
+#spanel{position:fixed;top:0;right:0;bottom:0;width:min(520px,94vw);background:#fff;border-left:1px solid var(--border);box-shadow:-6px 0 24px rgba(0,0,0,.16);transform:translateX(103%);transition:transform .25s;z-index:1000;display:flex;flex-direction:column}
 #spanel.open{transform:translateX(0)}
-.sp-head{padding:.9rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem;background:#f4f6f4}
-.sp-head b{font-size:.95rem;color:var(--primary)}
-.sp-head .sp-close{background:none;border:none;font-size:1.3rem;cursor:pointer;color:#888;line-height:1}
-.sp-meta{font-size:.78rem;color:#777;margin-top:.2rem}
-.sp-body{flex:1;overflow-y:auto;padding:1rem 1.1rem;font-size:.92rem;line-height:1.7}
-.sp-body mark{background:#f5e9a8;padding:0 .1rem;border-radius:2px}
-.sp-notes{margin-top:1rem;padding-top:.75rem;border-top:1px dashed var(--border)}
-.sp-notes .nt{font-size:.82rem;color:#666;background:#faf8f0;border-left:3px solid #e0d0a8;padding:.4rem .6rem;margin-bottom:.4rem;border-radius:0 .3rem .3rem 0}
+.sp-head{padding:.9rem 1.1rem .8rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem;background:#f4f6f4}
+.sp-badge{display:inline-block;color:#fff;font-size:.66rem;font-weight:700;letter-spacing:.05em;padding:.14rem .6rem;border-radius:1rem;margin-bottom:.4rem;text-transform:uppercase}
+.sp-head b{font-size:1rem;color:var(--text);display:block;line-height:1.35}
+.sp-head .sp-close{background:none;border:none;font-size:1.4rem;cursor:pointer;color:#888;line-height:1;padding:.1rem .3rem;border-radius:.4rem}
+.sp-head .sp-close:hover{background:#e4eae4;color:#333}
+.sp-meta{font-size:.78rem;color:#777;margin-top:.3rem}
+.sp-body{flex:1;overflow-y:auto;padding:1rem 1.1rem;font-size:.93rem;line-height:1.8}
+.sp-cith{font-size:.73rem;color:#8a6d1a;margin:0 0 .55rem;display:flex;align-items:center;gap:.45rem;font-weight:600}
+.sp-cith::before{content:'';flex:0 0 16px;height:9px;background:#f5e9a8;border-radius:2px}
+.sp-paper{background:#fdfcf6;border:1px solid #e8e4d6;border-radius:.55rem;padding:.95rem 1.05rem;box-shadow:inset 0 1px 4px rgba(0,0,0,.03)}
+.sp-body mark{background:linear-gradient(transparent 12%,#f5e9a8 12%,#f5e9a8 92%,transparent 92%);padding:0 .12rem;border-radius:3px}
+details.sp-notes{margin-top:1rem;border-top:1px dashed var(--border);padding-top:.7rem}
+details.sp-notes summary{cursor:pointer;font-size:.8rem;color:#8a6d1a;font-weight:600;margin-bottom:.45rem;user-select:none}
+details.sp-notes summary:hover{color:#6d5510}
+.sp-notes .nt{font-size:.83rem;color:#5c5648;background:#faf8f0;border-left:3px solid #e0d0a8;padding:.45rem .65rem;margin-bottom:.4rem;border-radius:0 .35rem .35rem 0;line-height:1.6}
 .sp-notes .nt mark{background:#f5e9a8}
-.sp-foot{padding:.75rem 1.1rem;border-top:1px solid var(--border);display:flex;gap:.6rem;flex-wrap:wrap}
-.sp-foot a,.sp-foot button{font-size:.8rem;color:var(--primary);background:#eef3ee;border:1px solid #c8d8ca;border-radius:2rem;padding:.35rem .9rem;text-decoration:none;cursor:pointer;font-family:inherit}
+.sp-shelf{margin-top:.9rem;font-size:.74rem;color:#999;font-style:italic}
+.sp-foot{padding:.75rem 1.1rem;border-top:1px solid var(--border);display:flex;gap:.6rem;flex-wrap:wrap;background:#fafaf8}
+.sp-foot a,.sp-foot button{font-size:.8rem;color:var(--primary);background:#eef3ee;border:1px solid #c8d8ca;border-radius:2rem;padding:.4rem 1rem;text-decoration:none;cursor:pointer;font-family:inherit}
+.sp-foot a.pri{background:var(--primary);color:#fff;border-color:var(--primary)}
+.sp-foot a.pri:hover{background:#234426}
+.sp-foot button:hover,.sp-foot a:not(.pri):hover{background:#dfe9e0}
 .net-canvas{width:100%;height:420px;display:block;cursor:grab}
 .net-legend{display:flex;gap:.9rem;flex-wrap:wrap;padding:.45rem .75rem;font-size:.75rem;color:#555;background:#f9faf9;border-top:1px solid #eee}
 .net-legend .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:.3rem}
@@ -119,8 +132,9 @@ details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-fami
 <p id="wp" style="max-width:500px;margin:0 auto 1rem;line-height:1.6"></p>
 <div class="examples" id="examples"></div>
 </div></div>
+<div id="sp-backdrop" onclick="closePanel()"></div>
 <div id="spanel" aria-hidden="true">
-<div class="sp-head"><div><b id="sp-title"></b><div class="sp-meta" id="sp-meta"></div></div><button class="sp-close" onclick="closePanel()">×</button></div>
+<div class="sp-head"><div style="min-width:0"><span class="sp-badge" id="sp-badge" style="display:none"></span><b id="sp-title"></b><div class="sp-meta" id="sp-meta"></div></div><button class="sp-close" onclick="closePanel()">×</button></div>
 <div class="sp-body" id="sp-body"></div>
 <div class="sp-foot" id="sp-foot"></div>
 </div>
@@ -206,7 +220,18 @@ function renderBlocks(blocks,cites){
 
 // --- source panel -----------------------------------------------------------
 const chunkCache={};
-function closePanel(){const p=document.getElementById('spanel');p.classList.remove('open');p.setAttribute('aria-hidden','true')}
+const DOCTYPE_META={diary:['#2c5530','Tagebuch','Diary'],letter:['#1d6fa5','Brief','Letter'],
+  chronology:['#8a5a83','Chronologie','Chronology'],document:['#4a7d8c','Dokument','Document'],
+  research_article:['#b8860b','Forschungsbeitrag','Research article'],
+  editorial_note:['#8a6d1a','Editorischer Kommentar','Editorial note']};
+function docTypeMeta(dt){
+  if(DOCTYPE_META[dt])return DOCTYPE_META[dt];
+  if((dt||'').startsWith('register_'))return['#667a68','Register','Register'];
+  return['#667a68',dt||'',dt||'']}
+function closePanel(){
+  document.getElementById('spanel').classList.remove('open');
+  document.getElementById('spanel').setAttribute('aria-hidden','true');
+  document.getElementById('sp-backdrop').classList.remove('open')}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel()});
 function highlightIn(raw,span){
   const flat=(raw||'').replace(/\s+/g,' ');
@@ -217,11 +242,14 @@ function highlightIn(raw,span){
   return esc(flat.slice(0,idx))+'<mark>'+esc(flat.slice(idx,idx+target.length))+'</mark>'+esc(flat.slice(idx+target.length))}
 async function openPanel(cite){
   const t=T(),panel=document.getElementById('spanel');
+  const badge=document.getElementById('sp-badge');
   const title=document.getElementById('sp-title'),meta=document.getElementById('sp-meta');
   const body=document.getElementById('sp-body'),foot=document.getElementById('sp-foot');
+  badge.style.display='none';
   title.textContent=cite.citation_label||'';meta.textContent='';
   body.textContent=t.spLoading;foot.innerHTML='';
   panel.classList.add('open');panel.setAttribute('aria-hidden','false');
+  document.getElementById('sp-backdrop').classList.add('open');
   let c=chunkCache[cite.chunk_id];
   if(!c){
     try{
@@ -230,27 +258,48 @@ async function openPanel(cite){
       c=await r.json();chunkCache[cite.chunk_id]=c;
     }catch(e){body.textContent='⚠';return}
   }
-  title.textContent=(c.doc_title&&c.doc_title!==c.citation_label?c.doc_title+' · ':'')+(c.citation_label||'');
-  meta.textContent=[c.date,c.source_desc].filter(Boolean).join(' · ');
+  // header: doc-type badge, document title, date/folio
+  const[bc,bde,ben]=docTypeMeta(c.doc_type);
+  badge.textContent=LANG==='de'?bde:ben;badge.style.background=bc;badge.style.display='inline-block';
+  title.textContent=(c.doc_title&&c.doc_title!==c.citation_label)?c.doc_title:(c.citation_label||'');
+  meta.textContent=[c.date,(c.folio?('Bl. '+c.folio):''),
+    (c.doc_title&&c.doc_title!==c.citation_label?c.citation_label:'')].filter(Boolean).join(' · ');
   body.innerHTML='';
-  const txt=document.createElement('div');
-  txt.innerHTML=highlightIn(c.text,cite.editorial?null:cite.cited_text);
-  body.appendChild(txt);
-  if(c.editorial_notes&&c.editorial_notes.length){
-    const nw=document.createElement('div');nw.className='sp-notes';
-    nw.innerHTML='<b style="font-size:.8rem;color:#8a6d1a">'+esc(t.spNotes)+'</b>';
-    c.editorial_notes.forEach(n=>{
+  // cited-span hint + passage on a "paper" card
+  const hasMainMark=!cite.editorial&&cite.cited_text;
+  if(cite.cited_text){
+    const h=document.createElement('div');h.className='sp-cith';h.textContent=t.spCited;body.appendChild(h);
+  }
+  const paper=document.createElement('div');paper.className='sp-paper';
+  paper.innerHTML=highlightIn(c.text,hasMainMark?cite.cited_text:null);
+  body.appendChild(paper);
+  // editorial notes: collapsible, open when few or when the citation lives there
+  const notes=c.editorial_notes||[];
+  if(notes.length){
+    const det=document.createElement('details');det.className='sp-notes';
+    if(notes.length<=3||cite.editorial)det.open=true;
+    det.innerHTML='<summary>'+esc(t.spNotes)+' ('+notes.length+')</summary>';
+    notes.forEach(n=>{
       const d=document.createElement('div');d.className='nt';
       d.innerHTML=highlightIn(n,cite.editorial?cite.cited_text:null);
-      nw.appendChild(d);
+      det.appendChild(d);
     });
-    body.appendChild(nw);
+    body.appendChild(det);
+  }
+  if(c.source_desc){
+    const sh=document.createElement('div');sh.className='sp-shelf';sh.textContent=c.source_desc;body.appendChild(sh);
   }
   const mk=body.querySelector('mark');
   if(mk)setTimeout(()=>mk.scrollIntoView({block:'center',behavior:'smooth'}),80);
   else body.scrollTop=0;
+  // footer: primary link into the edition + copy citation
   const url=cite.fragment_url||c.url;
-  if(url){const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.textContent=t.spOpen;foot.appendChild(a)}
+  if(url){const a=document.createElement('a');a.className='pri';a.href=url;a.target='_blank';a.rel='noopener';a.textContent=t.spOpen;foot.appendChild(a)}
+  const cp=document.createElement('button');cp.textContent='📋 '+t.citeTip;
+  cp.onclick=async()=>{
+    try{await navigator.clipboard.writeText(citationFor({doc_title:c.doc_title,citation_label:c.citation_label,url:c.url}));
+      cp.textContent='✓ '+t.citeCopied;setTimeout(()=>cp.textContent='📋 '+t.citeTip,1500)}catch(e){}};
+  foot.appendChild(cp);
 }
 function alen(x){
   if(Array.isArray(x))return x.length;

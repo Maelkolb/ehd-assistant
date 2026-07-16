@@ -524,7 +524,8 @@ class AgenticAnswerer:
                     "tool": block.name,
                     "input": block.input,
                 }
-                result = self._dispatch(block.name, block.input, sources, source_meta, artifacts)
+                result = self._dispatch(block.name, block.input, sources, source_meta,
+                                        artifacts, lang=lang)
                 trace.append({
                     "round": rounds_used,
                     "tool": block.name,
@@ -558,11 +559,14 @@ class AgenticAnswerer:
                 })
             user_content = list(tool_results)
             if meta_notes:
-                # language-neutral label: German prose here biased the model
-                # toward answering German regardless of the question's language
+                # language-neutral label; the answer_language tag is a recency
+                # nudge — the system hint alone loses against pages of German
+                # tool results
+                lang_tag = {"en": " answer_language=English",
+                            "fr": " answer_language=français"}.get(lang, "")
                 user_content.append({
                     "type": "text",
-                    "text": "[tool_metadata]\n" + "\n".join(meta_notes),
+                    "text": f"[tool_metadata]{lang_tag}\n" + "\n".join(meta_notes),
                 })
             messages.append({"role": "user", "content": user_content})
             self._advance_cache_marker(messages)
@@ -589,11 +593,20 @@ class AgenticAnswerer:
                    "tool": "repair_citations", "input": {}}
             yield {"type": "live_reset"}
             messages.append({"role": "assistant", "content": response.content})
-            messages.append({"role": "user", "content":
+            repair_msg = self._hint(
+                lang,
                 "Deine Antwort enthält keine Zitate. Gib exakt dieselbe Antwort "
                 "(gleiche Sprache, gleicher Inhalt) noch einmal vollständig aus, "
                 "aber belege sie durchgängig über die Zitierfunktion mit den "
-                "Suchergebnissen — mindestens ein Zitat pro Absatz."})
+                "Suchergebnissen — mindestens ein Zitat pro Absatz.",
+                "Your answer contains no citations. Reproduce exactly the same "
+                "answer in full (same language, same content), but support it "
+                "throughout via the citation mechanism with the search results — "
+                "at least one citation per paragraph.",
+                "Ta réponse ne contient aucune citation. Reproduis exactement la "
+                "même réponse (même langue, même contenu), mais appuie-la via le "
+                "mécanisme de citation — au moins une citation par paragraphe.")
+            messages.append({"role": "user", "content": repair_msg})
             try:
                 retry_kwargs = dict(model=active_model, max_tokens=max_tokens,
                                     system=system, messages=messages, tools=tools,
@@ -642,7 +655,7 @@ class AgenticAnswerer:
         }
 
         if answer_text and os.environ.get("SUGGESTIONS", "1") != "0":
-            questions = self._suggest_followups(query, answer_text)
+            questions = self._suggest_followups(query, answer_text, lang)
             if questions:
                 yield {"type": "suggestions", "questions": questions}
 
@@ -685,8 +698,15 @@ class AgenticAnswerer:
                 except Exception as e:
                     logger.warning(f"Could not fetch generated file {fid}: {e}")
 
-    def _suggest_followups(self, query: str, answer: str) -> list[str]:
+    def _suggest_followups(self, query: str, answer: str,
+                           lang: str | None = None) -> list[str]:
         """One cheap Haiku call for 3 follow-up questions (same language)."""
+        lang_rule = {
+            "en": "The user's question is in ENGLISH — the follow-up questions MUST "
+                  "be in English.",
+            "fr": "La question est en FRANÇAIS — les questions de suivi DOIVENT être "
+                  "en français.",
+        }.get(lang, "Verwende die Sprache der ursprünglichen Frage.")
         try:
             resp = self.client.messages.create(
                 model="claude-haiku-4-5",
@@ -694,8 +714,7 @@ class AgenticAnswerer:
                 system="Du schlägst Anschlussfragen für einen Rechercheassistenten zur "
                        "edition humboldt digital (Tagebücher, Briefe, Chronologie Alexander "
                        "von Humboldts) vor. Antworte NUR mit 3 kurzen Fragen (je max. 12 "
-                       "Wörter), eine pro Zeile, ohne Nummerierung. Verwende die Sprache "
-                       "der ursprünglichen Frage.",
+                       "Wörter), eine pro Zeile, ohne Nummerierung. " + lang_rule,
                 messages=[{
                     "role": "user",
                     "content": f"Frage: {query}\n\nAntwort (gekürzt): {answer[:1500]}\n\n"
@@ -755,7 +774,7 @@ class AgenticAnswerer:
         return out
 
     def _dispatch(self, name: str, tool_input: dict, sources: dict, source_meta: dict,
-                  artifacts: list | None = None) -> dict:
+                  artifacts: list | None = None, lang: str | None = None) -> dict:
         if artifacts is None:
             artifacts = []
         tool_input = self._coerce_tool_input(tool_input)
@@ -773,11 +792,11 @@ class AgenticAnswerer:
             elif name == "where_was_humboldt":
                 out = self._tool_whereabouts(tool_input, sources, source_meta)
             elif name == "create_map":
-                out = self._tool_create_map(tool_input, artifacts)
+                out = self._tool_create_map(tool_input, artifacts, lang)
             elif name == "create_timeline":
-                out = self._tool_create_timeline(tool_input, artifacts)
+                out = self._tool_create_timeline(tool_input, artifacts, lang)
             elif name == "create_network":
-                out = self._tool_create_network(tool_input, artifacts)
+                out = self._tool_create_network(tool_input, artifacts, lang)
             elif name == "get_document":
                 out = self._tool_get_document(tool_input, sources, source_meta)
             elif name == "query_measurements":
@@ -1092,7 +1111,18 @@ class AgenticAnswerer:
                                 and a.get("title") == art["title"])]
         artifacts.append(art)
 
-    def _tool_create_map(self, tool_input: dict, artifacts: list) -> dict:
+    @staticmethod
+    def _hint(lang: str | None, de: str, en: str, fr: str | None = None) -> str:
+        """Tool-result hints arrive right before the model answers — German
+        hints there drag English answers back into German."""
+        if lang == "en":
+            return en
+        if lang == "fr":
+            return fr or en
+        return de
+
+    def _tool_create_map(self, tool_input: dict, artifacts: list,
+                         lang: str | None = None) -> dict:
         stations_in = tool_input.get("stations") or []
         title = tool_input.get("title") or "Karte"
         resolved, unresolved = [], []
@@ -1129,15 +1159,23 @@ class AgenticAnswerer:
         })
         result = {
             "ok": True,
-            "hinweis": f"Karte „{title}“ mit {len(resolved)} Stationen wird dem Nutzer "
-                       "unter deiner Antwort angezeigt. Erwähne sie kurz, beschreibe sie "
-                       "aber nicht Station für Station.",
+            "hinweis": self._hint(
+                lang,
+                f"Karte „{title}“ mit {len(resolved)} Stationen wird dem Nutzer "
+                "unter deiner Antwort angezeigt. Erwähne sie kurz, beschreibe sie "
+                "aber nicht Station für Station.",
+                f"The map “{title}” with {len(resolved)} stations is displayed below "
+                "your answer. Mention it briefly; do not describe it station by "
+                "station. Answer in English.",
+                f"La carte « {title} » avec {len(resolved)} étapes s'affiche sous ta "
+                "réponse. Mentionne-la brièvement. Réponds en français."),
         }
         if unresolved:
             result["nicht_aufgeloest"] = unresolved
         return result
 
-    def _tool_create_timeline(self, tool_input: dict, artifacts: list) -> dict:
+    def _tool_create_timeline(self, tool_input: dict, artifacts: list,
+                              lang: str | None = None) -> dict:
         events_in = tool_input.get("events") or []
         title = tool_input.get("title") or "Zeitleiste"
         events = [
@@ -1156,8 +1194,14 @@ class AgenticAnswerer:
         self._upsert_artifact(artifacts, {"type": "timeline", "title": title, "events": events})
         return {
             "ok": True,
-            "hinweis": f"Zeitleiste „{title}“ mit {len(events)} Ereignissen wird dem "
-                       "Nutzer unter deiner Antwort angezeigt.",
+            "hinweis": self._hint(
+                lang,
+                f"Zeitleiste „{title}“ mit {len(events)} Ereignissen wird dem "
+                "Nutzer unter deiner Antwort angezeigt.",
+                f"The timeline “{title}” with {len(events)} events is displayed "
+                "below your answer. Answer in English.",
+                f"La chronologie « {title} » avec {len(events)} événements "
+                "s'affiche sous ta réponse. Réponds en français."),
         }
 
     def _tool_get_document(self, tool_input: dict, sources: dict, source_meta: dict):
@@ -1225,7 +1269,8 @@ class AgenticAnswerer:
             self._chunk_entities = m
         return self._chunk_entities
 
-    def _tool_create_network(self, tool_input: dict, artifacts: list) -> dict:
+    def _tool_create_network(self, tool_input: dict, artifacts: list,
+                             lang: str | None = None) -> dict:
         focus_in = (tool_input.get("focus") or "").strip()
         types = set(tool_input.get("entity_types") or [])
         max_nodes = min(int(tool_input.get("max_nodes") or 20), 40)
@@ -1299,9 +1344,16 @@ class AgenticAnswerer:
                                           "nodes": nodes, "edges": edges})
         return {
             "ok": True,
-            "hinweis": f"Netzwerk „{title}“ mit {len(nodes)} Knoten und {len(edges)} "
-                       "Kanten wird dem Nutzer unter deiner Antwort angezeigt. Gehe in "
-                       "der Antwort auf die wichtigsten Verbindungen ein.",
+            "hinweis": self._hint(
+                lang,
+                f"Netzwerk „{title}“ mit {len(nodes)} Knoten und {len(edges)} "
+                "Kanten wird dem Nutzer unter deiner Antwort angezeigt. Gehe in "
+                "der Antwort auf die wichtigsten Verbindungen ein.",
+                f"The network “{title}” with {len(nodes)} nodes and {len(edges)} "
+                "edges is displayed below your answer. Discuss the most important "
+                "connections. Answer in English.",
+                f"Le réseau « {title} » ({len(nodes)} nœuds, {len(edges)} liens) "
+                "s'affiche sous ta réponse. Réponds en français."),
             "zentrale_entitaet": {"name": ent["name"], "typ": ent["type"],
                                   "humboldt_id": fid, "passagen": len(focus_chunks)},
             "wichtigste_nachbarn": [
