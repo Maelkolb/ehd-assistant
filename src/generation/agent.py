@@ -22,7 +22,8 @@ from collections import Counter, defaultdict
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_ROUNDS = 6
+MAX_TOOL_ROUNDS = 8       # research budget
+GRACE_ROUNDS = 2          # extra rounds allowed for visualizations only
 SEARCH_TEXT_CHARS = 700
 CONTEXT_TEXT_CHARS = 1400
 
@@ -382,7 +383,7 @@ class AgenticAnswerer:
     # Public API
     # =========================================================================
 
-    def generate(self, query: str, max_tokens: int = 3000, model: str | None = None,
+    def generate(self, query: str, max_tokens: int = 8000, model: str | None = None,
                  history: list[dict] | None = None) -> dict:
         """Run the loop to completion and return the final answer dict."""
         final = {}
@@ -394,7 +395,7 @@ class AgenticAnswerer:
                 final["suggestions"] = event["questions"]
         return final
 
-    def iter_events(self, query: str, max_tokens: int = 3000, model: str | None = None,
+    def iter_events(self, query: str, max_tokens: int = 8000, model: str | None = None,
                     history: list[dict] | None = None):
         """
         Run the agent loop, yielding progress events as they happen:
@@ -443,15 +444,21 @@ class AgenticAnswerer:
         response = None
         rounds_used = 0
         iterations = 0
+        soft_forced = False
+        continuations = 0
         # text blocks from every round — the model often writes substantive
         # text before calling create_map etc.; only keeping the final round
         # silently dropped it from the rendered answer
         text_rounds: list[list] = []
         while True:
             iterations += 1
-            # pause_turn continuations don't consume the budget; the iteration
-            # cap prevents a pathological pause loop.
-            force_answer = rounds_used >= MAX_TOOL_ROUNDS or iterations > MAX_TOOL_ROUNDS * 3
+            # Budget in two stages: after MAX_TOOL_ROUNDS no more research,
+            # but visualizations stay possible (a hard tool_choice=none here
+            # used to leave "create a map" requests without a map); after the
+            # grace rounds the model must answer. pause_turn continuations
+            # don't consume the budget; the iteration cap stops pause loops.
+            hard_force = (rounds_used >= MAX_TOOL_ROUNDS + GRACE_ROUNDS
+                          or iterations > MAX_TOOL_ROUNDS * 3)
             kwargs = dict(
                 model=active_model,
                 max_tokens=max_tokens,
@@ -459,14 +466,37 @@ class AgenticAnswerer:
                 messages=messages,
                 tools=tools,
             )
-            if force_answer:
+            if hard_force:
                 kwargs["tool_choice"] = {"type": "none"}
                 messages.append({
                     "role": "user",
-                    "content": "Werkzeugbudget erschöpft. Beantworte die Frage jetzt "
-                               "auf Basis der bisherigen Ergebnisse und belege deine "
-                               "Aussagen durch Zitieren der Suchergebnisse. Antworte "
-                               "in der Sprache der Nutzerfrage.",
+                    "content": self._hint(
+                        lang,
+                        "Werkzeugbudget erschöpft. Beantworte die Frage jetzt auf "
+                        "Basis der bisherigen Ergebnisse und belege deine Aussagen "
+                        "durch Zitieren der Suchergebnisse.",
+                        "Tool budget exhausted. Answer the question now from the "
+                        "results so far, citing the search results.",
+                        "Budget d'outils épuisé. Réponds maintenant à partir des "
+                        "résultats obtenus, en citant les résultats de recherche."),
+                })
+            elif rounds_used >= MAX_TOOL_ROUNDS and not soft_forced:
+                soft_forced = True
+                messages.append({
+                    "role": "user",
+                    "content": self._hint(
+                        lang,
+                        "Recherche-Budget erschöpft — keine weiteren Suchen. Falls "
+                        "der Nutzer eine Karte, Zeitleiste oder ein Netzwerk wollte, "
+                        "erstelle sie JETZT (create_map/create_timeline/"
+                        "create_network) und beantworte dann die Frage mit Zitaten.",
+                        "Research budget exhausted — no more searches. If the user "
+                        "asked for a map, timeline or network, create them NOW "
+                        "(create_map/create_timeline/create_network), then answer "
+                        "with citations.",
+                        "Budget de recherche épuisé — plus de recherches. Si "
+                        "l'utilisateur a demandé une carte, chronologie ou réseau, "
+                        "crée-les MAINTENANT, puis réponds avec citations."),
                 })
 
             try:
@@ -509,6 +539,23 @@ class AgenticAnswerer:
                 continue
 
             if response.stop_reason != "tool_use":
+                # announce-then-stop: the model sometimes ends its turn with
+                # "Now let me visualize this on a map" without calling the
+                # tool — nudge it to follow through instead of shipping a
+                # broken promise
+                if not hard_force and continuations < 2:
+                    nudge = self._unfulfilled_visualization(text_rounds, artifacts, lang)
+                    # echo only text blocks: a max_tokens-truncated turn can
+                    # contain a dangling tool_use, which the API rejects
+                    # without a matching tool_result
+                    echo = [b for b in response.content
+                            if getattr(b, "type", "") == "text" and (b.text or "").strip()]
+                    if nudge and echo:
+                        continuations += 1
+                        logger.info("Answer announced a visualization without creating it — nudging")
+                        messages.append({"role": "assistant", "content": echo})
+                        messages.append({"role": "user", "content": nudge})
+                        continue
                 break
 
             rounds_used += 1
@@ -592,7 +639,9 @@ class AgenticAnswerer:
             yield {"type": "tool_call", "round": rounds_used + 1,
                    "tool": "repair_citations", "input": {}}
             yield {"type": "live_reset"}
-            messages.append({"role": "assistant", "content": response.content})
+            repair_echo = [b for b in response.content
+                           if getattr(b, "type", "") == "text" and (b.text or "").strip()]
+            messages.append({"role": "assistant", "content": repair_echo or response.content})
             repair_msg = self._hint(
                 lang,
                 "Deine Antwort enthält keine Zitate. Gib exakt dieselbe Antwort "
@@ -927,6 +976,42 @@ class AgenticAnswerer:
         if not any_citation:
             return [], []
         return answer_blocks, cited
+
+    _ANNOUNCE_RE = re.compile(
+        r"\b(let me|i['’]ll|i will|now i|ich (erstelle|zeichne|visualisiere)|"
+        r"erstelle (jetzt|nun|dir)|je vais)\b", re.I)
+    _VIS_TYPES = {
+        "map": re.compile(r"\b(map|karte|carte)\b", re.I),
+        "timeline": re.compile(r"\b(timeline|zeitleiste|zeitstrahl|chronologie)\b", re.I),
+        "network": re.compile(r"\b(network|netzwerk|réseau|beziehungsnetz)\b", re.I),
+    }
+    _VIS_TOOLS = {"map": "create_map", "timeline": "create_timeline",
+                  "network": "create_network"}
+
+    def _unfulfilled_visualization(self, text_rounds: list, artifacts: list,
+                                   lang: str | None) -> str | None:
+        """A nudge message if the final text promises a map/timeline/network
+        that was never created; None otherwise."""
+        if not text_rounds:
+            return None
+        tail = "".join(getattr(b, "text", "") or "" for b in text_rounds[-1]).strip()[-300:]
+        if not self._ANNOUNCE_RE.search(tail):
+            return None
+        have = {a.get("type") for a in artifacts}
+        missing = [t for t, rx in self._VIS_TYPES.items()
+                   if rx.search(tail) and t not in have]
+        if not missing:
+            return None
+        tool_names = ", ".join(self._VIS_TOOLS[m] for m in missing)
+        return self._hint(
+            lang,
+            f"Du hast eine Visualisierung angekündigt, aber das Werkzeug nicht "
+            f"aufgerufen. Rufe jetzt {tool_names} auf und schließe dann deine "
+            "Antwort ab (nicht von vorn beginnen).",
+            f"You announced a visualization but did not call the tool. Call "
+            f"{tool_names} now, then finish your answer (do not start over).",
+            f"Tu as annoncé une visualisation sans appeler l'outil. Appelle "
+            f"{tool_names} maintenant, puis termine ta réponse.")
 
     _EN_WORDS = re.compile(
         r"\b(the|of|and|what|which|where|when|who|whom|create|show|make|draw|"
