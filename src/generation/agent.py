@@ -31,6 +31,42 @@ CONTEXT_TEXT_CHARS = 1400
 # the model can attribute them; citations into blocks >= 1 are editor's voice.
 EDITORIAL_PREFIX = "[Editorische Anmerkung der Herausgeber] "
 
+# $/MTok (input, output) for cost telemetry; cache write = 1.25x/2x input,
+# cache read = 0.1x input
+_PRICES = {
+    "claude-haiku-4-5": (1.0, 5.0),
+    "claude-sonnet-5": (3.0, 15.0),
+    "claude-opus-4-8": (5.0, 25.0),
+}
+
+
+class _UsageTally:
+    """Accumulates API usage across all rounds of one request."""
+
+    def __init__(self, model: str):
+        self.model = model
+        self.input = self.output = self.cache_read = self.cache_write = 0
+        self.rounds = 0
+
+    def add(self, usage) -> None:
+        if usage is None:
+            return
+        self.rounds += 1
+        self.input += getattr(usage, "input_tokens", 0) or 0
+        self.output += getattr(usage, "output_tokens", 0) or 0
+        self.cache_read += getattr(usage, "cache_read_input_tokens", 0) or 0
+        self.cache_write += getattr(usage, "cache_creation_input_tokens", 0) or 0
+
+    def cost_usd(self) -> float:
+        inp, out = _PRICES.get(self.model, (3.0, 15.0))
+        return round((self.input * inp + self.cache_read * inp * 0.1
+                      + self.cache_write * inp * 1.25 + self.output * out) / 1e6, 4)
+
+    def as_dict(self) -> dict:
+        return {"rounds": self.rounds, "input": self.input, "output": self.output,
+                "cache_read": self.cache_read, "cache_write": self.cache_write,
+                "est_cost_usd": self.cost_usd()}
+
 _SOURCE_CHUNK_RE = re.compile(r"#chunk=([\w.-]+)")
 
 
@@ -409,6 +445,7 @@ class AgenticAnswerer:
         """
         t0 = time.time()
         active_model = model or self.model
+        tally = _UsageTally(active_model)
         sources: dict[str, int] = {}   # chunk_id -> quelle_nr
         source_meta: dict[int, dict] = {}
         trace: list[dict] = []
@@ -418,14 +455,25 @@ class AgenticAnswerer:
         if _code_execution_enabled(active_model):
             tools.append(CODE_EXECUTION_TOOL)
 
+        # optional cost knob (A/B via eval harness before adopting a default);
+        # Haiku 4.5 rejects the effort parameter
+        effort = os.environ.get("EFFORT", "").strip().lower()
+        extra_kwargs = {}
+        if effort in ("low", "medium", "high", "xhigh", "max") \
+                and active_model.startswith(("claude-sonnet", "claude-opus")):
+            extra_kwargs["output_config"] = {"effort": effort}
+
         messages = list(history or []) + [{"role": "user", "content": query}]
         # cache breakpoint on the system block also covers the (stable) tool
         # definitions, which render before it — saves the full static prefix
         # on every loop round and every follow-up request.
+        # 1h TTL: the widget's traffic is sporadic; the static prefix is shared
+        # across all users of the same model, so one 2x write per hour buys
+        # 0.1x reads for everyone else
         system = [{
             "type": "text",
             "text": SYSTEM_PROMPT.format(max_rounds=MAX_TOOL_ROUNDS),
-            "cache_control": {"type": "ephemeral"},
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
         }]
         # explicit language hint AFTER the breakpoint (cache stays warm):
         # the German prompt + German sources otherwise pull answers into German
@@ -465,6 +513,7 @@ class AgenticAnswerer:
                 system=system,
                 messages=messages,
                 tools=tools,
+                **extra_kwargs,
             )
             if hard_force:
                 kwargs["tool_choice"] = {"type": "none"}
@@ -510,6 +559,7 @@ class AgenticAnswerer:
                     response = yield from self._stream_round(kwargs)
                 else:
                     raise
+            tally.add(getattr(response, "usage", None))
 
             # surface server-side tool activity (code execution) in the trace
             for block in response.content:
@@ -583,7 +633,7 @@ class AgenticAnswerer:
                     "type": "tool_result",
                     "tool": block.name,
                     "n": result.get("n", 0),
-                    "preview": self._result_preview(result["payload"]),
+                    "preview": self._result_preview(result),
                 }
                 # citable chunks go out as search_result blocks (span-level
                 # citations). The API forbids mixing block types inside one
@@ -659,8 +709,9 @@ class AgenticAnswerer:
             try:
                 retry_kwargs = dict(model=active_model, max_tokens=max_tokens,
                                     system=system, messages=messages, tools=tools,
-                                    tool_choice={"type": "none"})
+                                    tool_choice={"type": "none"}, **extra_kwargs)
                 response = yield from self._stream_round(retry_kwargs)
+                tally.add(getattr(response, "usage", None))
                 retry_text = [b for b in response.content if getattr(b, "type", "") == "text"]
                 if any((b.text or "").strip() for b in retry_text):
                     text_rounds = [retry_text]
@@ -675,13 +726,12 @@ class AgenticAnswerer:
             except Exception as e:
                 logger.warning(f"Citation repair failed: {e}")
         elapsed = round(time.time() - t0, 2)
-        usage = getattr(response, "usage", None)
-        if usage is not None:
-            logger.info(
-                f"Usage (final round): in={usage.input_tokens} out={usage.output_tokens} "
-                f"cache_read={getattr(usage, 'cache_read_input_tokens', 0)} "
-                f"cache_write={getattr(usage, 'cache_creation_input_tokens', 0)}"
-            )
+        u = tally.as_dict()
+        logger.info(
+            f"Usage total ({active_model}): rounds={u['rounds']} in={u['input']} "
+            f"out={u['output']} cache_read={u['cache_read']} "
+            f"cache_write={u['cache_write']} est=${u['est_cost_usd']}"
+        )
         logger.info(
             f"Agentic answer in {elapsed}s, {len(trace)} tool calls, "
             f"{len(cited)} cited sources ({'api' if answer_blocks else 'regex'} citations). Trace: "
@@ -700,6 +750,7 @@ class AgenticAnswerer:
                 "trace": trace,
                 "artifacts": artifacts,
                 "elapsed_s": elapsed,
+                "usage": u,
             },
         }
 
@@ -782,13 +833,19 @@ class AgenticAnswerer:
             return []
 
     @staticmethod
-    def _result_preview(payload, limit: int = 3) -> list[str]:
-        """Short human-readable labels of what a tool returned."""
+    def _result_preview(result: dict, limit: int = 3) -> list[str]:
+        """Short human-readable labels of what a tool returned (for the UI
+        trace). Prefers the search_result block titles — the metadata payload
+        no longer repeats the labels."""
+        blocks = result.get("blocks") or []
+        labels = [b.get("title", "") for b in blocks[:limit] if b.get("title")]
+        if labels:
+            return labels
+        payload = result["payload"]
         if isinstance(payload, dict):
             if "error" in payload:
                 return [payload["error"][:80]]
             return [payload.get("citation_label", "")][:1]
-        labels = []
         for item in payload[:limit]:
             if not isinstance(item, dict):
                 continue
@@ -857,7 +914,10 @@ class AgenticAnswerer:
             out = {"error": str(e)}
         # chunk-bearing tools return (payload, search_result_blocks)
         payload, blocks = out if isinstance(out, tuple) else (out, None)
-        n = len(payload) if isinstance(payload, list) else (0 if "error" in payload else 1)
+        if blocks:
+            n = len(blocks)
+        else:
+            n = len(payload) if isinstance(payload, list) else (0 if "error" in payload else 1)
         return {"payload": payload, "n": n, "blocks": blocks or None}
 
     def _register_source(self, chunk_id: str, sources: dict, source_meta: dict) -> int:
@@ -906,14 +966,13 @@ class AgenticAnswerer:
         chunk = self.retriever.chunk_store.get(chunk_id)
         if chunk is None:
             return None, None
-        nr = self._register_source(chunk_id, sources, source_meta)
+        self._register_source(chunk_id, sources, source_meta)
+        # label + url live in the block (title/source) — repeating them here
+        # only burns tokens
         meta = {
-            "quelle_nr": nr,
             "chunk_id": chunk_id,
-            "citation_label": chunk.citation_label,
             "doc_type": chunk.doc_type,
             "date": chunk.date_iso,
-            "url": chunk.url,
         }
         if score is not None:
             meta["score"] = round(score, 3)
@@ -1067,11 +1126,9 @@ class AgenticAnswerer:
                 "mention_count": h["mention_count"],
                 "url": h["url"],
             }
-            # register entries are citable sources too — give them a quelle_nr
+            # register entries are citable sources too
             if h.get("register_chunk_id"):
-                item["quelle_nr"] = self._register_source(
-                    h["register_chunk_id"], sources, source_meta
-                )
+                self._register_source(h["register_chunk_id"], sources, source_meta)
                 chunk = self.retriever.chunk_store.get(h["register_chunk_id"])
                 if chunk is not None:
                     blocks.append(self._sr_block(
@@ -1134,14 +1191,11 @@ class AgenticAnswerer:
             return {"error": "Keine Regex-Treffer."}
         out, blocks = [], []
         for m in matches:
-            nr = self._register_source(m["chunk_id"], sources, source_meta)
+            self._register_source(m["chunk_id"], sources, source_meta)
             out.append({
-                "quelle_nr": nr,
                 "chunk_id": m["chunk_id"],
-                "citation_label": m["citation_label"],
                 "doc_type": m["doc_type"],
                 "date": m["date_iso"],
-                "url": m["url"],
             })
             chunk = self.retriever.chunk_store.get(m["chunk_id"])
             if chunk is not None:
@@ -1163,27 +1217,25 @@ class AgenticAnswerer:
         entries = self.retriever.whereabouts(
             date_from=tool_input.get("date_from", ""),
             date_to=tool_input.get("date_to"),
-            limit=int(tool_input.get("limit") or 20),
+            limit=min(int(tool_input.get("limit") or 20), 60),
         )
         if not entries:
             return {"error": "Keine Chronologie-Einträge in diesem Zeitraum. "
                              "Versuche einen breiteren Bereich (z. B. nur Jahr-Monat)."}
-        out, blocks = [], []
+        # itinerary lists are the biggest single context item — compact
+        # pipe-rows instead of JSON objects, short excerpts, one note max
+        out, blocks = ["datum|chunk_id|orte|url"], []
         for e in entries:
-            nr = self._register_source(e["chunk_id"], sources, source_meta)
-            out.append({
-                "quelle_nr": nr,
-                "chunk_id": e["chunk_id"],
-                "datum": e["date"],
-                "typ": e["doc_type"],
-                "orte": e["places"][:6],
-                "url": e["url"],
-            })
+            self._register_source(e["chunk_id"], sources, source_meta)
+            out.append("|".join([
+                e["date"], e["chunk_id"], ",".join(e["places"][:4]), e["url"],
+            ]))
             chunk = self.retriever.chunk_store.get(e["chunk_id"])
             if chunk is not None:
                 blocks.append(self._sr_block(
-                    chunk, e["text"][:400],
+                    chunk, e["text"][:300],
                     title=f"{e['citation_label']} — {e['date']}",
+                    notes=[n[:250] for n in chunk.editorial_notes[:1]],
                 ))
         return out, blocks
 
@@ -1294,20 +1346,20 @@ class AgenticAnswerer:
         if "error" in doc:
             return doc
         # one citable search_result per leaf chunk, so citations resolve to the
-        # exact passage instead of just "somewhere in this document"
+        # exact passage instead of just "somewhere in this document"; the notes
+        # ride on the blocks, so drop them (and the text) from the payload
         doc.pop("text", None)
-        blocks, nrs = [], []
+        doc.pop("editorial_notes", None)
+        blocks = []
         for cid in doc["chunk_ids"]:
             chunk = self.retriever.chunk_store.get(cid)
             if chunk is None:
                 continue
-            nrs.append({"quelle_nr": self._register_source(cid, sources, source_meta),
-                        "chunk_id": cid})
+            self._register_source(cid, sources, source_meta)
             blocks.append(self._sr_block(
                 chunk, chunk.text_regularized,
                 title=f"{doc['doc_title']} — {chunk.citation_label}",
             ))
-        doc["abschnitte"] = nrs
         return doc, blocks
 
     def _tool_query_measurements(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
@@ -1321,21 +1373,20 @@ class AgenticAnswerer:
                              "grep nach Zahlen+Einheit im Text."}
         out, blocks, seen = [], [], set()
         for r in rows:
-            nr = self._register_source(r["chunk_id"], sources, source_meta)
+            self._register_source(r["chunk_id"], sources, source_meta)
             out.append({
-                "quelle_nr": nr,
                 "chunk_id": r["chunk_id"],
                 "wert": r["value"],
                 "einheit": r["unit"],
                 "metrisch": f"{r['value_metric']} {r['unit_metric']}" if r["value_metric"] is not None else "",
-                "kontext": r["context"][:150],
+                "kontext": r["context"][:120],
             })
             if r["chunk_id"] not in seen:
                 seen.add(r["chunk_id"])
                 chunk = self.retriever.chunk_store.get(r["chunk_id"])
                 if chunk is not None:
                     blocks.append(self._sr_block(
-                        chunk, chunk.text_regularized[:400],
+                        chunk, chunk.text_regularized[:300],
                         title=f"{chunk.citation_label} (Messwerte)", notes=[],
                     ))
         return out, blocks

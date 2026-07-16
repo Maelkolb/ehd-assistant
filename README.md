@@ -57,6 +57,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 | `ANTHROPIC_API_KEY` | — | required for generation |
 | `LLM_MODEL` | `claude-haiku-4-5` | Claude model ID (widget can select Sonnet/Opus) |
 | `RETRIEVAL_MODE` | `agentic` | `oneshot` = legacy pipeline |
+| `EFFORT` | unset (= `high`); deploys set `medium` | `low`/`medium`/`high`/`xhigh`/`max` — thinking/output budget on Sonnet/Opus (ignored on Haiku). `medium` measured at −22% cost with quality parity (`scripts/eval_cost.py` A/B, 2026-07). |
+| `CITATION_REPAIR` | `1` | `0` disables the one-shot repair pass for uncited answers |
 | `CORS_ORIGINS` | `*` (logs a warning) | comma-separated allowlist for production |
 | `GEMINI_MODEL` | — | only if falling back to Vertex AI; env-only by design |
 
