@@ -10,6 +10,9 @@ Fasse den Brief H0000003 zusammen.
 Erstelle eine Karte der Stationen auf Humboldts Reise nach Italien 1805 (Hinreise Paris bis Rom).
 Zeichne eine Karte der wichtigsten Orte der Amerikareise 1799–1804.
 Erstelle eine Zeitleiste der Vesuvbesteigungen Humboldts 1805.
+Zeig mir ein Beziehungsnetz um den Chimborazo.
+Erstelle ein Netzwerk der Pflanzen, die gemeinsam mit Bonpland erwähnt werden.
+Mit welchen Institutionen stand Humboldt in Verbindung? Zeig ein Netzwerk um die Académie des sciences.
 Welche Höhenmessungen in Toisen finden sich zum Chimborazo?
 Nutze code_execution: rechne die Toisen-Werte 50, 60, 1600 und 3016 in Meter um und berechne Mittelwert und Standardabweichung.
 Who was Bonpland?

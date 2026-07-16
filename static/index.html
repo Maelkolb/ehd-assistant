@@ -24,6 +24,29 @@ header .sub{font-size:.85rem;opacity:.8;font-style:italic}
 .src-ref{color:var(--primary);font-weight:600;font-size:.85em}
 .sources{margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--border);font-size:.85rem;color:#666}
 .sources a{color:var(--primary)}
+.cited{border-bottom:1px dotted #9db89f}
+.cite-chip{background:#e8f0e9;border:1px solid #c8d8ca;border-radius:.6rem;font-size:.68rem;padding:0 .35rem;margin:0 .1rem;color:var(--primary);cursor:pointer;font-family:inherit;line-height:1.2;vertical-align:super}
+.cite-chip:hover{background:#d3e3d5}
+.cite-chip.ed{background:#faf3e0;border-color:#e0d0a8;color:#8a6d1a}
+.sp-open-btn{background:none;border:none;cursor:pointer;font-size:.85rem;padding:0 .25rem;opacity:.55}
+.sp-open-btn:hover{opacity:1}
+#spanel{position:fixed;top:0;right:0;bottom:0;width:min(480px,92vw);background:#fff;border-left:1px solid var(--border);box-shadow:-4px 0 18px rgba(0,0,0,.12);transform:translateX(102%);transition:transform .25s;z-index:1000;display:flex;flex-direction:column}
+#spanel.open{transform:translateX(0)}
+.sp-head{padding:.9rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem;background:#f4f6f4}
+.sp-head b{font-size:.95rem;color:var(--primary)}
+.sp-head .sp-close{background:none;border:none;font-size:1.3rem;cursor:pointer;color:#888;line-height:1}
+.sp-meta{font-size:.78rem;color:#777;margin-top:.2rem}
+.sp-body{flex:1;overflow-y:auto;padding:1rem 1.1rem;font-size:.92rem;line-height:1.7}
+.sp-body mark{background:#f5e9a8;padding:0 .1rem;border-radius:2px}
+.sp-notes{margin-top:1rem;padding-top:.75rem;border-top:1px dashed var(--border)}
+.sp-notes .nt{font-size:.82rem;color:#666;background:#faf8f0;border-left:3px solid #e0d0a8;padding:.4rem .6rem;margin-bottom:.4rem;border-radius:0 .3rem .3rem 0}
+.sp-notes .nt mark{background:#f5e9a8}
+.sp-foot{padding:.75rem 1.1rem;border-top:1px solid var(--border);display:flex;gap:.6rem;flex-wrap:wrap}
+.sp-foot a,.sp-foot button{font-size:.8rem;color:var(--primary);background:#eef3ee;border:1px solid #c8d8ca;border-radius:2rem;padding:.35rem .9rem;text-decoration:none;cursor:pointer;font-family:inherit}
+.net-canvas{width:100%;height:420px;display:block;cursor:grab}
+.net-legend{display:flex;gap:.9rem;flex-wrap:wrap;padding:.45rem .75rem;font-size:.75rem;color:#555;background:#f9faf9;border-top:1px solid #eee}
+.net-legend .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:.3rem}
+.net-tip{position:absolute;pointer-events:none;background:#2a2a2a;color:#fff;font-size:.75rem;padding:.25rem .55rem;border-radius:.35rem;opacity:0;transition:opacity .12s;white-space:nowrap;z-index:5}
 .copy-btn{background:none;border:none;cursor:pointer;font-size:.85rem;padding:0 .25rem;opacity:.55}
 .copy-btn:hover{opacity:1}
 .a-actions{margin-top:.6rem;display:flex;gap:.6rem;align-items:center}
@@ -87,6 +110,11 @@ details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-fami
 <p id="wp" style="max-width:500px;margin:0 auto 1rem;line-height:1.6"></p>
 <div class="examples" id="examples"></div>
 </div></div>
+<div id="spanel" aria-hidden="true">
+<div class="sp-head"><div><b id="sp-title"></b><div class="sp-meta" id="sp-meta"></div></div><button class="sp-close" onclick="closePanel()">×</button></div>
+<div class="sp-body" id="sp-body"></div>
+<div class="sp-foot" id="sp-foot"></div>
+</div>
 <div class="input-area"><div class="input-wrap">
 <button class="reset-btn" id="resetbtn" onclick="resetChat()" title="">↺</button>
 <select id="model" title="Claude"></select>
@@ -101,8 +129,9 @@ const I18N={
      steps:'Recherche-Schritte',hits:'Treffer',error:'Fehler',noanswer:'Keine Antwort.',
      share:'🔗 Link teilen',linkCopied:'✓ Link kopiert',citeTip:'Zitat kopieren',citeCopied:'✓ Zitat kopiert',
      followups:'Weiterfragen:',reset:'Neues Gespräch',accessed:'abgerufen am',
+     spNotes:'Editorische Anmerkungen',spOpen:'Im Original öffnen ↗',spCited:'Zitierte Stelle hervorgehoben',spView:'Quelle ansehen',spLoading:'Lade Quelle…',spEd:'Editorischer Kommentar',
      models:{'claude-haiku-4-5':'Haiku (schnell)','claude-sonnet-5':'Sonnet (ausgewogen)','claude-opus-4-8':'Opus (gründlich)'},
-     tools:{lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext',where_was_humboldt:'📅 Chronologie',create_map:'🗺️ Karte',create_timeline:'📈 Zeitleiste',get_document:'📜 Dokument',query_measurements:'📏 Messwerte',code_execution:'🐍 Code'},
+     tools:{lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext',where_was_humboldt:'📅 Chronologie',create_map:'🗺️ Karte',create_timeline:'📈 Zeitleiste',create_network:'🕸️ Netzwerk',get_document:'📜 Dokument',query_measurements:'📏 Messwerte',code_execution:'🐍 Code'},
      examples:['Welche Messungen machte Humboldt am Königstein?','Wen traf Humboldt in Wien?','Wer war Bonpland?','Erstelle eine Karte der Italienreise 1805']},
  en:{sub:'Alex · Research Assistant',wh:'Ask Alex',
      wp:"I'm Alex — I search Alexander von Humboldt's travel journals, letters and documents.",
@@ -110,8 +139,9 @@ const I18N={
      steps:'Research steps',hits:'results',error:'Error',noanswer:'No answer.',
      share:'🔗 Share link',linkCopied:'✓ Link copied',citeTip:'Copy citation',citeCopied:'✓ Citation copied',
      followups:'Follow up:',reset:'New conversation',accessed:'accessed',
+     spNotes:'Editorial notes',spOpen:'Open in the edition ↗',spCited:'Cited passage highlighted',spView:'View source',spLoading:'Loading source…',spEd:'Editorial note',
      models:{'claude-haiku-4-5':'Haiku (fast)','claude-sonnet-5':'Sonnet (balanced)','claude-opus-4-8':'Opus (thorough)'},
-     tools:{lookup_entity:'📇 Index',chunks_for_entity:'🔗 Annotated passages',search:'🔍 Search',grep:'⌕ Grep',get_context:'📄 Context',where_was_humboldt:'📅 Chronology',create_map:'🗺️ Map',create_timeline:'📈 Timeline',get_document:'📜 Document',query_measurements:'📏 Measurements',code_execution:'🐍 Code'},
+     tools:{lookup_entity:'📇 Index',chunks_for_entity:'🔗 Annotated passages',search:'🔍 Search',grep:'⌕ Grep',get_context:'📄 Context',where_was_humboldt:'📅 Chronology',create_map:'🗺️ Map',create_timeline:'📈 Timeline',create_network:'🕸️ Network',get_document:'📜 Document',query_measurements:'📏 Measurements',code_execution:'🐍 Code'},
      examples:['What measurements did Humboldt take at the Königstein?','Whom did Humboldt meet in Vienna?','Who was Bonpland?','Create a map of the 1805 Italy journey']}
 };
 let LANG=localStorage.getItem('humboldt_lang')||'de';
@@ -137,11 +167,76 @@ function ask(b){q.value=b.textContent;send()}
 function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
 function add(r,h){const d=document.createElement('div');d.className='msg '+r;d.innerHTML='<div class="b">'+(r==='user'?esc(h):h)+'</div>';chat.appendChild(d);chat.scrollTop=1e6;return d}
 function resetChat(){convo=[];history.replaceState(null,'',location.pathname);document.querySelectorAll('.msg').forEach(m=>m.remove());wel.style.display='';q.focus()}
+function mdfmt(a){
+  return a.replace(/^### (.*)$/gm,'<b>$1</b>').replace(/^## (.*)$/gm,'<b>$1</b>').replace(/^# (.*)$/gm,'<b>$1</b>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>')}
 function mdlite(raw){
   let a=esc(raw);
   a=a.replace(/\[(?:Quelle[n]?|Sources?)\s+[\d,\s und]+\]/g,'<span class="src-ref">$&</span>');
-  a=a.replace(/^### (.*)$/gm,'<b>$1</b>').replace(/^## (.*)$/gm,'<b>$1</b>').replace(/^# (.*)$/gm,'<b>$1</b>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
-  return a}
+  return mdfmt(a)}
+// answer_blocks -> HTML with span-level citation chips; chips reference the
+// per-render citation array via data-i (wired up after innerHTML is set)
+function renderBlocks(blocks,cites){
+  let html='';
+  blocks.forEach(b=>{
+    const t=esc(b.text||'');
+    if(b.citations&&b.citations.length){
+      const chips=b.citations.map(c=>{
+        cites.push(c);
+        return '<button class="cite-chip'+(c.editorial?' ed':'')+'" data-i="'+(cites.length-1)+'" title="'+esc(c.cited_text?c.cited_text.slice(0,120):'')+'">'+c.index+'</button>';
+      }).join('');
+      html+='<span class="cited">'+t+'</span>'+chips;
+    }else html+=t;
+  });
+  return mdfmt(html)}
+
+// --- source panel -----------------------------------------------------------
+const chunkCache={};
+function closePanel(){const p=document.getElementById('spanel');p.classList.remove('open');p.setAttribute('aria-hidden','true')}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel()});
+function highlightIn(raw,span){
+  const flat=(raw||'').replace(/\s+/g,' ');
+  if(!span)return esc(flat);
+  const target=span.replace(/\s+/g,' ').trim();
+  const idx=target?flat.toLowerCase().indexOf(target.toLowerCase()):-1;
+  if(idx<0)return esc(flat);
+  return esc(flat.slice(0,idx))+'<mark>'+esc(flat.slice(idx,idx+target.length))+'</mark>'+esc(flat.slice(idx+target.length))}
+async function openPanel(cite){
+  const t=T(),panel=document.getElementById('spanel');
+  const title=document.getElementById('sp-title'),meta=document.getElementById('sp-meta');
+  const body=document.getElementById('sp-body'),foot=document.getElementById('sp-foot');
+  title.textContent=cite.citation_label||'';meta.textContent='';
+  body.textContent=t.spLoading;foot.innerHTML='';
+  panel.classList.add('open');panel.setAttribute('aria-hidden','false');
+  let c=chunkCache[cite.chunk_id];
+  if(!c){
+    try{
+      const r=await fetch(API+'/chunk/'+encodeURIComponent(cite.chunk_id));
+      if(!r.ok)throw new Error();
+      c=await r.json();chunkCache[cite.chunk_id]=c;
+    }catch(e){body.textContent='⚠';return}
+  }
+  title.textContent=(c.doc_title&&c.doc_title!==c.citation_label?c.doc_title+' · ':'')+(c.citation_label||'');
+  meta.textContent=[c.date,c.source_desc].filter(Boolean).join(' · ');
+  body.innerHTML='';
+  const txt=document.createElement('div');
+  txt.innerHTML=highlightIn(c.text,cite.editorial?null:cite.cited_text);
+  body.appendChild(txt);
+  if(c.editorial_notes&&c.editorial_notes.length){
+    const nw=document.createElement('div');nw.className='sp-notes';
+    nw.innerHTML='<b style="font-size:.8rem;color:#8a6d1a">'+esc(t.spNotes)+'</b>';
+    c.editorial_notes.forEach(n=>{
+      const d=document.createElement('div');d.className='nt';
+      d.innerHTML=highlightIn(n,cite.editorial?cite.cited_text:null);
+      nw.appendChild(d);
+    });
+    body.appendChild(nw);
+  }
+  const mk=body.querySelector('mark');
+  if(mk)setTimeout(()=>mk.scrollIntoView({block:'center',behavior:'smooth'}),80);
+  else body.scrollTop=0;
+  const url=cite.fragment_url||c.url;
+  if(url){const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.textContent=t.spOpen;foot.appendChild(a)}
+}
 function argSummary(tool,inp){
   if(!inp)return'';
   if(tool==='search'){let s='„'+(inp.query||'')+'“';if(inp.doc_types)s+=' ['+inp.doc_types.join(',')+']';if(inp.date_from||inp.date_to)s+=' '+(inp.date_from||'')+'–'+(inp.date_to||'');return s}
@@ -152,6 +247,7 @@ function argSummary(tool,inp){
   if(tool==='where_was_humboldt')return (inp.date_from||'')+(inp.date_to&&inp.date_to!==inp.date_from?' – '+inp.date_to:'');
   if(tool==='create_map')return'„'+(inp.title||'')+'“ ('+((inp.stations||[]).length)+')';
   if(tool==='create_timeline')return'„'+(inp.title||'')+'“ ('+((inp.events||[]).length)+')';
+  if(tool==='create_network')return'„'+(inp.focus||'')+'“'+(inp.entity_types?' ['+inp.entity_types.join(',')+']':'');
   if(tool==='get_document')return inp.doc_id||'';
   if(tool==='query_measurements')return[inp.unit,inp.context_contains].filter(Boolean).join(' · ');
   if(tool==='code_execution')return(inp.code||'').split('\n').filter(l=>l.trim())[0]?.slice(0,60)||'';
@@ -206,11 +302,103 @@ function renderArtifact(art,container){
       tl.appendChild(row);
     });
     box.appendChild(tl);
+  }else if(art.type==='network'){
+    renderNetwork(art,box);
   }else if(art.type==='image'){
     const img=document.createElement('img');
     img.src='data:'+(art.media_type||'image/png')+';base64,'+art.data;
     img.alt=art.title||'';box.appendChild(img);
   }
+}
+
+// --- entity co-occurrence network (canvas force layout, no deps) ------------
+const NET_COLORS={person:'#2c5530',place:'#1d6fa5',plant:'#6b8e23',institution:'#8a5a83',glossary:'#b8860b'};
+const NET_TYPES={de:{person:'Person',place:'Ort',plant:'Pflanze',institution:'Institution',glossary:'Glossar'},
+                 en:{person:'Person',place:'Place',plant:'Plant',institution:'Institution',glossary:'Glossary'}};
+function renderNetwork(art,box){
+  const wrap=document.createElement('div');wrap.style.position='relative';box.appendChild(wrap);
+  const cv=document.createElement('canvas');cv.className='net-canvas';wrap.appendChild(cv);
+  const tip=document.createElement('div');tip.className='net-tip';wrap.appendChild(tip);
+  const lg=document.createElement('div');lg.className='net-legend';box.appendChild(lg);
+  const nodes=(art.nodes||[]).map(n=>({...n}));
+  const byId={};nodes.forEach(n=>byId[n.id]=n);
+  const edges=(art.edges||[]).filter(e=>byId[e.source]&&byId[e.target]);
+  [...new Set(nodes.map(n=>n.type))].forEach(tp=>{
+    const s=document.createElement('span');
+    s.innerHTML='<span class="dot" style="background:'+(NET_COLORS[tp]||'#777')+'"></span>'+esc((NET_TYPES[LANG]||NET_TYPES.de)[tp]||tp);
+    lg.appendChild(s);
+  });
+  setTimeout(()=>{
+    const W=cv.clientWidth||720,H=420,dpr=window.devicePixelRatio||1;
+    cv.width=W*dpr;cv.height=H*dpr;
+    const ctx=cv.getContext('2d');ctx.scale(dpr,dpr);
+    const maxW=Math.max(...nodes.map(n=>n.weight||1),1);
+    nodes.forEach((n,i)=>{
+      n.r=n.focus?16:4+9*Math.sqrt((n.weight||1)/maxW);
+      const a=2*Math.PI*i/Math.max(1,nodes.length-1);
+      n.x=n.focus?W/2:W/2+170*Math.cos(a)+Math.random()*20;
+      n.y=n.focus?H/2:H/2+130*Math.sin(a)+Math.random()*20;
+      n.vx=0;n.vy=0;
+    });
+    const maxE=Math.max(...edges.map(e=>e.weight||1),1);
+    let ticks=0,hover=null;
+    function step(){
+      for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
+        const a=nodes[i],b=nodes[j];
+        let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy+0.01,d=Math.sqrt(d2);
+        const f=1600/d2;dx/=d;dy/=d;
+        a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f;
+      }
+      edges.forEach(e=>{
+        const a=byId[e.source],b=byId[e.target];
+        const rest=150-70*Math.sqrt((e.weight||1)/maxE);
+        let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)+0.01;
+        const f=0.02*(d-rest)/d;
+        a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f;
+      });
+      nodes.forEach(n=>{
+        n.vx+=(W/2-n.x)*0.005;n.vy+=(H/2-n.y)*0.005;
+        if(!n.focus){n.x+=n.vx*=0.85;n.y+=n.vy*=0.85}
+        n.x=Math.max(n.r+2,Math.min(W-n.r-2,n.x));
+        n.y=Math.max(n.r+2,Math.min(H-n.r-2,n.y));
+      });
+    }
+    function draw(){
+      ctx.clearRect(0,0,W,H);
+      ctx.lineCap='round';
+      edges.forEach(e=>{
+        const a=byId[e.source],b=byId[e.target];
+        ctx.strokeStyle='rgba(100,120,100,'+(0.12+0.3*(e.weight||1)/maxE)+')';
+        ctx.lineWidth=0.5+2*(e.weight||1)/maxE;
+        ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+      });
+      const labeled=nodes.slice().sort((a,b)=>(b.r-a.r)).slice(0,14);
+      nodes.forEach(n=>{
+        ctx.fillStyle=NET_COLORS[n.type]||'#777';
+        ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,7);ctx.fill();
+        if(n.focus||n===hover){ctx.strokeStyle='#2a2a2a';ctx.lineWidth=1.5;ctx.stroke()}
+      });
+      ctx.font='11px Georgia,serif';ctx.textAlign='center';
+      labeled.forEach(n=>{
+        const label=n.label.length>24?n.label.slice(0,23)+'…':n.label;
+        ctx.fillStyle='rgba(255,255,255,.75)';
+        ctx.fillRect(n.x-ctx.measureText(label).width/2-2,n.y+n.r+3,ctx.measureText(label).width+4,13);
+        ctx.fillStyle='#333';ctx.fillText(label,n.x,n.y+n.r+13);
+      });
+    }
+    (function loop(){for(let k=0;k<3;k++)step();draw();if(++ticks<120)requestAnimationFrame(loop)})();
+    cv.addEventListener('mousemove',ev=>{
+      const rc=cv.getBoundingClientRect(),mx=ev.clientX-rc.left,my=ev.clientY-rc.top;
+      hover=nodes.find(n=>(n.x-mx)**2+(n.y-my)**2<(n.r+3)**2)||null;
+      cv.style.cursor=hover&&hover.url?'pointer':'default';
+      if(hover){
+        tip.textContent=hover.label+' · '+((NET_TYPES[LANG]||NET_TYPES.de)[hover.type]||hover.type)+(hover.focus?'':' · '+hover.weight);
+        tip.style.left=Math.min(mx+12,W-160)+'px';tip.style.top=(my-24)+'px';tip.style.opacity='1';
+      }else tip.style.opacity='0';
+      draw();
+    });
+    cv.addEventListener('click',()=>{if(hover&&hover.url)window.open(hover.url,'_blank','noopener')});
+  },50);
 }
 
 function renderAnswer(bubble,queryText,d,traceEl){
@@ -221,7 +409,15 @@ function renderAnswer(bubble,queryText,d,traceEl){
     box.innerHTML='<summary>🔎 '+L2.steps+' ('+traceEl.childNodes.length+') · '+(d.elapsed_s||'?')+'s · '+esc(d.model||'')+'</summary>';
     box.appendChild(traceEl);bubble.appendChild(box);
   }
-  const ans=document.createElement('div');ans.innerHTML=mdlite(d.answer||L2.noanswer);bubble.appendChild(ans);
+  const ans=document.createElement('div');
+  const cites=[];
+  const hasApiCites=d.answer_blocks&&d.answer_blocks.some(b=>b.citations&&b.citations.length);
+  ans.innerHTML=hasApiCites?renderBlocks(d.answer_blocks,cites):mdlite(d.answer||L2.noanswer);
+  bubble.appendChild(ans);
+  const labelFor={};(d.sources||[]).forEach(s=>{if(s.chunk_id)labelFor[s.chunk_id]=s.citation_label});
+  ans.querySelectorAll('.cite-chip').forEach(b=>{
+    b.onclick=()=>{const c=cites[+b.dataset.i];openPanel({...c,citation_label:labelFor[c.chunk_id]||''})};
+  });
   if(d.sources&&d.sources.length){
     const src=document.createElement('div');src.className='sources';
     src.innerHTML='<b>'+L2.sources+'</b><br>';
@@ -229,6 +425,11 @@ function renderAnswer(bubble,queryText,d,traceEl){
       const line=document.createElement('span');
       const label=s.citation_label||('#'+s.index);
       line.innerHTML='['+s.index+'] '+(s.url?'<a href="'+esc(s.url)+'" target="_blank">'+esc(label)+'</a>':esc(label))+' ';
+      if(s.chunk_id){
+        const vw=document.createElement('button');vw.className='sp-open-btn';vw.textContent='📖';vw.title=L2.spView;
+        vw.onclick=()=>openPanel({chunk_id:s.chunk_id,citation_label:s.citation_label,url:s.url});
+        line.appendChild(vw);
+      }
       const cp=document.createElement('button');cp.className='copy-btn';cp.textContent='📋';cp.title=L2.citeTip;
       cp.onclick=async()=>{try{await navigator.clipboard.writeText(citationFor(s));cp.textContent='✓';cp.title=L2.citeCopied;setTimeout(()=>{cp.textContent='📋';cp.title=L2.citeTip},1500)}catch(e){}};
       line.appendChild(cp);line.appendChild(document.createElement('br'));
@@ -242,7 +443,7 @@ function renderAnswer(bubble,queryText,d,traceEl){
   const sh=document.createElement('button');sh.textContent=L2.share;
   sh.onclick=async()=>{
     try{
-      const payload={q:queryText,data:{answer:d.answer,sources:d.sources,artifacts:d.artifacts,model:d.model,elapsed_s:d.elapsed_s}};
+      const payload={q:queryText,data:{answer:d.answer,answer_blocks:d.answer_blocks,sources:d.sources,artifacts:d.artifacts,model:d.model,elapsed_s:d.elapsed_s}};
       const frag=await gzipB64(JSON.stringify(payload));
       await navigator.clipboard.writeText(location.origin+location.pathname+'#a='+frag);
       sh.textContent=L2.linkCopied;setTimeout(()=>sh.textContent=L2.share,2000);

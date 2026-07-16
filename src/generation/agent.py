@@ -11,17 +11,48 @@ so citations in the final answer are directly resolvable.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
 import re
 import time
+import urllib.parse
+from collections import Counter, defaultdict
 
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 6
 SEARCH_TEXT_CHARS = 700
 CONTEXT_TEXT_CHARS = 1400
+
+# Editorial notes inside search_result content are prefixed with this marker so
+# the model can attribute them; citations into blocks >= 1 are editor's voice.
+EDITORIAL_PREFIX = "[Editorische Anmerkung der Herausgeber] "
+
+_SOURCE_CHUNK_RE = re.compile(r"#chunk=([\w.-]+)")
+
+
+def build_fragment_url(url: str, cited_text: str) -> str:
+    """
+    Best-effort deep link: append a Text Fragment (#:~:text=) built from the
+    cited span, so supporting browsers scroll to and highlight the passage on
+    edition-humboldt.de. If the page text doesn't match exactly (diplomatic vs.
+    regularized differences), browsers just land on the page — safe fallback.
+    """
+    if not url or not cited_text:
+        return url
+    words = re.sub(r"\s+", " ", cited_text).strip().split(" ")
+    words = [w for w in words if w]
+    if not words:
+        return url
+    q = lambda s: urllib.parse.quote(s, safe="")
+    if len(words) <= 8:
+        frag = q(" ".join(words))
+    else:
+        # start,end range syntax: only the boundaries must match exactly
+        frag = q(" ".join(words[:5])) + "," + q(" ".join(words[-5:]))
+    return f"{url}#:~:text={frag}"
 
 # Server-side code execution: only offered on Sonnet/Opus (availability on
 # Haiku unverified); disable entirely with CODE_EXECUTION=0.
@@ -59,6 +90,10 @@ Außerdem:
   aufgelöst. Nutze es IMMER, wenn nach einer Karte gefragt wird.
 - `create_timeline`: erzeugt eine visuelle Zeitleiste (Datum + Ereignis), die dem Nutzer \
   angezeigt wird — für Reiseverläufe, Ereignisfolgen, Lebensstationen.
+- `create_network`: erzeugt ein interaktives Beziehungsnetz um eine Registerentität \
+  (Person, Ort, Institution, Pflanze), das dem Nutzer angezeigt wird. Kanten = gemeinsame \
+  Erwähnung in denselben Textpassagen. Nutze es bei Fragen nach Beziehungen, Umfeld, \
+  Kontaktnetz oder "Wer/was taucht gemeinsam mit X auf?".
 - `get_document`: den vollständigen Text eines Dokuments (Brief, Tagebuchabschnitt) laden — \
   für Zusammenfassungen ganzer Dokumente.
 - `query_measurements`: strukturierte Suche in den von den Herausgebern ausgezeichneten \
@@ -79,10 +114,14 @@ Empfohlene Strategie:
 Du hast maximal {max_rounds} Werkzeugrunden — recherchiere gezielt, nicht erschöpfend.
 
 ## Antwortregeln
-- Jede faktische Aussage MUSS mit [Quelle N] belegt werden — N ist die quelle_nr aus den \
-  Werkzeugergebnissen. Zitiere nur Quellen, die du tatsächlich gesehen hast.
+- Belege jede faktische Aussage durch Zitieren der Suchergebnisse — die Zitierfunktion \
+  verknüpft deine Sätze automatisch mit den Fundstellen. Zitiere nur Ergebnisse, die du \
+  tatsächlich gesehen hast, und schreibe KEINE eigenen Quellennummern wie "[Quelle 3]" \
+  in den Antworttext.
 - Unterscheide klar zwischen Humboldts eigenem Text und editorischen Kommentaren \
-  ("Laut Anmerkung der Herausgeber ...", Quellen vom Typ editorial_note).
+  ("Laut Anmerkung der Herausgeber ..." — Inhalte, die mit \
+  "[Editorische Anmerkung der Herausgeber]" markiert sind, sowie Quellen vom Typ \
+  editorial_note).
 - Wenn die Recherche nichts Belastbares ergibt, sage das ehrlich.
 - Antworte in der Sprache der Frage (Deutsch, Englisch oder Französisch).
 - Antworte konkret, mit Namen, Daten, Orten und Messwerten aus den Quellen.
@@ -104,7 +143,7 @@ TOOLS = [
                 "name": {"type": "string", "description": "Name oder Begriff, z. B. 'Bonpland' oder 'Chimborazo'"},
                 "entity_type": {
                     "type": "string",
-                    "enum": ["person", "place", "institution", "glossary", "plants"],
+                    "enum": ["person", "place", "institution", "glossary", "plant"],
                     "description": "Optional: auf einen Registertyp einschränken",
                 },
             },
@@ -257,6 +296,31 @@ TOOLS = [
         },
     },
     {
+        "name": "create_network",
+        "description": (
+            "Erzeugt ein interaktives Beziehungsnetz (Graph) um eine Registerentität — "
+            "Person, Ort, Institution oder Pflanze —, das dem Nutzer unter der Antwort "
+            "angezeigt wird. Knoten sind mit-erwähnte Registerentitäten, Kanten gewichten "
+            "die Zahl gemeinsamer Textpassagen (editorische Annotationen). Die wichtigsten "
+            "Nachbarn werden auch dir zurückgemeldet, damit du sie besprechen kannst."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "focus": {"type": "string", "description": "Name oder humboldt_id der zentralen Entität, z. B. 'Bonpland' oder 'H0002222'"},
+                "entity_types": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["person", "place", "institution", "plant", "glossary"]},
+                    "description": "Optional: nur diese Typen als Nachbarknoten",
+                },
+                "max_nodes": {"type": "integer", "description": "Max. Nachbarknoten (Standard 20, max. 40)"},
+                "min_shared": {"type": "integer", "description": "Mindestzahl gemeinsamer Passagen für eine Kante (Standard 2)"},
+                "title": {"type": "string", "description": "Optional: Titel des Netzes"},
+            },
+            "required": ["focus"],
+        },
+    },
+    {
         "name": "get_document",
         "description": (
             "Lädt den vollständigen Text eines Dokuments (Brief, Tagebuchabschnitt, "
@@ -300,6 +364,7 @@ class AgenticAnswerer:
         self.model = model or os.environ.get("LLM_MODEL", "claude-haiku-4-5")
         self.retriever = retriever
         self.entity_index = entity_index
+        self._chunk_entities: dict[str, set[str]] | None = None  # lazy inverse of entity_index.chunk_index
 
     # =========================================================================
     # Public API
@@ -341,7 +406,14 @@ class AgenticAnswerer:
             tools.append(CODE_EXECUTION_TOOL)
 
         messages = list(history or []) + [{"role": "user", "content": query}]
-        system = SYSTEM_PROMPT.format(max_rounds=MAX_TOOL_ROUNDS)
+        # cache breakpoint on the system block also covers the (stable) tool
+        # definitions, which render before it — saves the full static prefix
+        # on every loop round and every follow-up request.
+        system = [{
+            "type": "text",
+            "text": SYSTEM_PROMPT.format(max_rounds=MAX_TOOL_ROUNDS),
+            "cache_control": {"type": "ephemeral"},
+        }]
 
         response = None
         rounds_used = 0
@@ -407,6 +479,7 @@ class AgenticAnswerer:
             rounds_used += 1
             messages.append({"role": "assistant", "content": response.content})
             tool_results = []
+            meta_notes = []
             for block in response.content:
                 if block.type != "tool_use":
                     continue
@@ -429,22 +502,56 @@ class AgenticAnswerer:
                     "n": result.get("n", 0),
                     "preview": self._result_preview(result["payload"]),
                 }
+                # citable chunks go out as search_result blocks (span-level
+                # citations). The API forbids mixing block types inside one
+                # tool_result, so the JSON metadata (chunk_ids, dates, scores,
+                # hints) follows as a plain text block in the same user turn.
+                blocks_out = result.get("blocks")
+                if blocks_out:
+                    content = blocks_out
+                    if result["payload"] is not None:
+                        meta_notes.append(
+                            f"{block.name}: "
+                            + json.dumps(result["payload"], ensure_ascii=False)
+                        )
+                else:
+                    content = json.dumps(result["payload"], ensure_ascii=False)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": json.dumps(result["payload"], ensure_ascii=False),
+                    "content": content,
                 })
-            messages.append({"role": "user", "content": tool_results})
+            user_content = list(tool_results)
+            if meta_notes:
+                user_content.append({
+                    "type": "text",
+                    "text": "Metadaten zu den Werkzeugergebnissen (u. a. chunk_ids "
+                            "für get_context):\n" + "\n".join(meta_notes),
+                })
+            messages.append({"role": "user", "content": user_content})
+            self._advance_cache_marker(messages)
 
         answer_text = "".join(
             b.text for b in response.content if b.type == "text"
         ).strip() if response else ""
 
-        cited = self._extract_citations(answer_text, source_meta)
+        # Span-level citations from the API (search_result blocks); the legacy
+        # [Quelle N] regex stays as fallback for models that still write markers.
+        answer_blocks, cited = self._collect_api_citations(response, sources, source_meta)
+        if not cited:
+            cited = self._extract_citations(answer_text, source_meta)
+            answer_blocks = []
         elapsed = round(time.time() - t0, 2)
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            logger.info(
+                f"Usage (final round): in={usage.input_tokens} out={usage.output_tokens} "
+                f"cache_read={getattr(usage, 'cache_read_input_tokens', 0)} "
+                f"cache_write={getattr(usage, 'cache_creation_input_tokens', 0)}"
+            )
         logger.info(
             f"Agentic answer in {elapsed}s, {len(trace)} tool calls, "
-            f"{len(cited)} cited sources. Trace: "
+            f"{len(cited)} cited sources ({'api' if answer_blocks else 'regex'} citations). Trace: "
             + "; ".join(f"{t['tool']}({json.dumps(t['input'], ensure_ascii=False)})→{t['n_results']}" for t in trace)
         )
 
@@ -452,6 +559,7 @@ class AgenticAnswerer:
             "type": "answer",
             "data": {
                 "answer": answer_text,
+                "answer_blocks": answer_blocks,
                 "sources": cited or list(source_meta.values())[:8],
                 "citations": [{"index": s["index"], "citation_label": s["citation_label"],
                                "url": s["url"]} for s in cited],
@@ -560,32 +668,36 @@ class AgenticAnswerer:
             artifacts = []
         try:
             if name == "lookup_entity":
-                payload = self._tool_lookup_entity(tool_input, sources, source_meta)
+                out = self._tool_lookup_entity(tool_input, sources, source_meta)
             elif name == "chunks_for_entity":
-                payload = self._tool_chunks_for_entity(tool_input, sources, source_meta)
+                out = self._tool_chunks_for_entity(tool_input, sources, source_meta)
             elif name == "search":
-                payload = self._tool_search(tool_input, sources, source_meta)
+                out = self._tool_search(tool_input, sources, source_meta)
             elif name == "grep":
-                payload = self._tool_grep(tool_input, sources, source_meta)
+                out = self._tool_grep(tool_input, sources, source_meta)
             elif name == "get_context":
-                payload = self._tool_get_context(tool_input, sources, source_meta)
+                out = self._tool_get_context(tool_input, sources, source_meta)
             elif name == "where_was_humboldt":
-                payload = self._tool_whereabouts(tool_input, sources, source_meta)
+                out = self._tool_whereabouts(tool_input, sources, source_meta)
             elif name == "create_map":
-                payload = self._tool_create_map(tool_input, artifacts)
+                out = self._tool_create_map(tool_input, artifacts)
             elif name == "create_timeline":
-                payload = self._tool_create_timeline(tool_input, artifacts)
+                out = self._tool_create_timeline(tool_input, artifacts)
+            elif name == "create_network":
+                out = self._tool_create_network(tool_input, artifacts)
             elif name == "get_document":
-                payload = self._tool_get_document(tool_input, sources, source_meta)
+                out = self._tool_get_document(tool_input, sources, source_meta)
             elif name == "query_measurements":
-                payload = self._tool_query_measurements(tool_input, sources, source_meta)
+                out = self._tool_query_measurements(tool_input, sources, source_meta)
             else:
-                payload = {"error": f"Unbekanntes Werkzeug: {name}"}
+                out = {"error": f"Unbekanntes Werkzeug: {name}"}
         except Exception as e:
             logger.exception(f"Tool {name} failed")
-            payload = {"error": str(e)}
+            out = {"error": str(e)}
+        # chunk-bearing tools return (payload, search_result_blocks)
+        payload, blocks = out if isinstance(out, tuple) else (out, None)
         n = len(payload) if isinstance(payload, list) else (0 if "error" in payload else 1)
-        return {"payload": payload, "n": n}
+        return {"payload": payload, "n": n, "blocks": blocks or None}
 
     def _register_source(self, chunk_id: str, sources: dict, source_meta: dict) -> int:
         if chunk_id in sources:
@@ -603,35 +715,128 @@ class AgenticAnswerer:
         }
         return nr
 
+    def _sr_block(self, chunk, text: str, title: str | None = None,
+                  notes: list | None = None) -> dict:
+        """
+        Build a citations-enabled search_result block for one chunk. The source
+        URI carries the chunk_id in its fragment, so API citations can be
+        resolved back to the exact chunk (URLs alone collide on shared folios).
+        Editorial notes ride along as separately-attributable content blocks.
+        """
+        content = [{"type": "text", "text": text or "(kein Text)"}]
+        if notes is None and chunk is not None:
+            notes = chunk.editorial_notes
+        for n in (notes or [])[:3]:
+            content.append({"type": "text", "text": EDITORIAL_PREFIX + str(n)[:400]})
+        base = (chunk.url if chunk is not None else "") or "https://edition-humboldt.de"
+        return {
+            "type": "search_result",
+            "source": f"{base}#chunk={chunk.chunk_id}",
+            "title": title or chunk.citation_label or chunk.chunk_id,
+            "content": content,
+            "citations": {"enabled": True},
+        }
+
     def _chunk_payload(self, chunk_id: str, sources: dict, source_meta: dict,
-                       text_chars: int = SEARCH_TEXT_CHARS, score: float | None = None) -> dict | None:
+                       text_chars: int = SEARCH_TEXT_CHARS,
+                       score: float | None = None) -> tuple[dict | None, dict | None]:
+        """(metadata for the model, search_result block) for one chunk.
+        The text itself lives only in the block — the metadata stays compact."""
         chunk = self.retriever.chunk_store.get(chunk_id)
         if chunk is None:
-            return None
+            return None, None
         nr = self._register_source(chunk_id, sources, source_meta)
-        out = {
+        meta = {
             "quelle_nr": nr,
             "chunk_id": chunk_id,
             "citation_label": chunk.citation_label,
             "doc_type": chunk.doc_type,
             "date": chunk.date_iso,
             "url": chunk.url,
-            "text": chunk.text_regularized[:text_chars],
         }
-        if chunk.editorial_notes:
-            out["editorische_anmerkungen"] = [n[:300] for n in chunk.editorial_notes[:3]]
         if score is not None:
-            out["score"] = round(score, 3)
-        return out
+            meta["score"] = round(score, 3)
+        block = self._sr_block(chunk, chunk.text_regularized[:text_chars])
+        return meta, block
 
-    def _tool_lookup_entity(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
+    def _collect_api_citations(self, response, sources: dict,
+                               source_meta: dict) -> tuple[list, list]:
+        """
+        Extract span-level API citations from the final message.
+        Returns (answer_blocks, cited_sources): answer_blocks mirror the text
+        blocks with their citations (display index, cited span, deep link);
+        cited_sources are renumbered in reading order.
+        """
+        if response is None:
+            return [], []
+        nr_by_chunk = dict(sources)
+        display: dict[str, int] = {}
+        cited: list[dict] = []
+        answer_blocks: list[dict] = []
+        any_citation = False
+        for block in response.content:
+            if getattr(block, "type", "") != "text":
+                continue
+            entry = {"text": block.text, "citations": []}
+            for cit in (getattr(block, "citations", None) or []):
+                m = _SOURCE_CHUNK_RE.search(getattr(cit, "source", "") or "")
+                if not m:
+                    continue
+                chunk_id = m.group(1)
+                orig_nr = nr_by_chunk.get(chunk_id)
+                if orig_nr is None or orig_nr not in source_meta:
+                    continue
+                if chunk_id not in display:
+                    display[chunk_id] = len(display) + 1
+                    s = dict(source_meta[orig_nr])
+                    s["index"] = display[chunk_id]
+                    cited.append(s)
+                cited_text = (getattr(cit, "cited_text", "") or "")
+                # block 0 is the passage text; blocks >= 1 are editorial notes
+                editorial = (getattr(cit, "start_block_index", 0) or 0) >= 1
+                if editorial and cited_text.startswith(EDITORIAL_PREFIX):
+                    cited_text = cited_text[len(EDITORIAL_PREFIX):]
+                url = source_meta[orig_nr].get("url", "")
+                entry["citations"].append({
+                    "index": display[chunk_id],
+                    "chunk_id": chunk_id,
+                    "cited_text": cited_text[:600],
+                    "editorial": editorial,
+                    "url": url,
+                    "fragment_url": url if editorial else build_fragment_url(url, cited_text),
+                })
+                any_citation = True
+            answer_blocks.append(entry)
+        if not any_citation:
+            return [], []
+        return answer_blocks, cited
+
+    @staticmethod
+    def _advance_cache_marker(messages: list) -> None:
+        """Move the single conversation cache breakpoint to the newest
+        tool_result block (system prompt holds a second, static one)."""
+        last = None
+        for msg in messages:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            for b in content:
+                if isinstance(b, dict):
+                    b.pop("cache_control", None)
+            if content and isinstance(content[-1], dict) \
+                    and content[-1].get("type") in ("tool_result", "text"):
+                last = content[-1]
+        if last is not None:
+            last["cache_control"] = {"type": "ephemeral"}
+
+    def _tool_lookup_entity(self, tool_input: dict, sources: dict, source_meta: dict):
         hits = self.entity_index.lookup(
             tool_input.get("name", ""),
             entity_type=tool_input.get("entity_type"),
         )
         if not hits:
             return {"error": "Keine Registereinträge gefunden. Versuche eine andere Schreibweise oder search."}
-        out = []
+        out, blocks = [], []
         for h in hits:
             item = {
                 "humboldt_id": h["id"],
@@ -647,23 +852,32 @@ class AgenticAnswerer:
                 item["quelle_nr"] = self._register_source(
                     h["register_chunk_id"], sources, source_meta
                 )
+                chunk = self.retriever.chunk_store.get(h["register_chunk_id"])
+                if chunk is not None:
+                    blocks.append(self._sr_block(
+                        chunk,
+                        h["description"][:400] or chunk.text_regularized[:400],
+                        title=f"Registereintrag: {h['name']}",
+                        notes=[],
+                    ))
             out.append(item)
-        return out
+        return out, blocks
 
-    def _tool_chunks_for_entity(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
+    def _tool_chunks_for_entity(self, tool_input: dict, sources: dict, source_meta: dict):
         hid = tool_input.get("humboldt_id", "")
         limit = int(tool_input.get("limit") or 6)
         chunk_ids = self.entity_index.chunks_for(hid)
         if not chunk_ids:
             return {"error": f"Keine annotierten Textstellen für {hid}."}
-        payloads = []
+        metas, blocks = [], []
         for cid in chunk_ids[:limit]:
-            p = self._chunk_payload(cid, sources, source_meta)
-            if p:
-                payloads.append(p)
+            meta, block = self._chunk_payload(cid, sources, source_meta)
+            if meta:
+                metas.append(meta)
+                blocks.append(block)
         if len(chunk_ids) > limit:
-            payloads.append({"hinweis": f"{len(chunk_ids) - limit} weitere Textstellen vorhanden."})
-        return payloads
+            metas.append({"hinweis": f"{len(chunk_ids) - limit} weitere Textstellen vorhanden."})
+        return metas, blocks
 
     def _tool_search(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
         filters = {}
@@ -680,10 +894,13 @@ class AgenticAnswerer:
         )
         if not results:
             return {"error": "Keine Treffer. Versuche andere Suchbegriffe oder Schreibvarianten."}
-        return [
-            p for r in results
-            if (p := self._chunk_payload(r.chunk_id, sources, source_meta, score=r.fused_score))
-        ]
+        metas, blocks = [], []
+        for r in results:
+            meta, block = self._chunk_payload(r.chunk_id, sources, source_meta, score=r.fused_score)
+            if meta:
+                metas.append(meta)
+                blocks.append(block)
+        return metas, blocks
 
     def _tool_grep(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
         matches = self.retriever.grep(
@@ -695,7 +912,7 @@ class AgenticAnswerer:
             return matches[0]
         if not matches:
             return {"error": "Keine Regex-Treffer."}
-        out = []
+        out, blocks = [], []
         for m in matches:
             nr = self._register_source(m["chunk_id"], sources, source_meta)
             out.append({
@@ -705,18 +922,22 @@ class AgenticAnswerer:
                 "doc_type": m["doc_type"],
                 "date": m["date_iso"],
                 "url": m["url"],
-                "match": m["match"],
             })
-        return out
+            chunk = self.retriever.chunk_store.get(m["chunk_id"])
+            if chunk is not None:
+                blocks.append(self._sr_block(chunk, m["match"], notes=[]))
+        return out, blocks
 
-    def _tool_get_context(self, tool_input: dict, sources: dict, source_meta: dict) -> dict:
+    def _tool_get_context(self, tool_input: dict, sources: dict, source_meta: dict):
         ctx = self.retriever.get_context(tool_input.get("chunk_id", ""))
         if "error" in ctx:
             return ctx
         nr = self._register_source(ctx["chunk_id"], sources, source_meta)
         ctx["quelle_nr"] = nr
-        ctx["text"] = ctx["text"][:CONTEXT_TEXT_CHARS]
-        return ctx
+        chunk = self.retriever.chunk_store.get(ctx["chunk_id"])
+        block = self._sr_block(chunk, ctx.pop("text")[:CONTEXT_TEXT_CHARS],
+                               notes=ctx.pop("editorial_notes", None))
+        return ctx, [block]
 
     def _tool_whereabouts(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
         entries = self.retriever.whereabouts(
@@ -727,18 +948,24 @@ class AgenticAnswerer:
         if not entries:
             return {"error": "Keine Chronologie-Einträge in diesem Zeitraum. "
                              "Versuche einen breiteren Bereich (z. B. nur Jahr-Monat)."}
-        out = []
+        out, blocks = [], []
         for e in entries:
             nr = self._register_source(e["chunk_id"], sources, source_meta)
             out.append({
                 "quelle_nr": nr,
+                "chunk_id": e["chunk_id"],
                 "datum": e["date"],
                 "typ": e["doc_type"],
-                "text": e["text"][:400],
                 "orte": e["places"][:6],
                 "url": e["url"],
             })
-        return out
+            chunk = self.retriever.chunk_store.get(e["chunk_id"])
+            if chunk is not None:
+                blocks.append(self._sr_block(
+                    chunk, e["text"][:400],
+                    title=f"{e['citation_label']} — {e['date']}",
+                ))
+        return out, blocks
 
     def _tool_create_map(self, tool_input: dict, artifacts: list) -> dict:
         stations_in = tool_input.get("stations") or []
@@ -808,14 +1035,26 @@ class AgenticAnswerer:
                        "Nutzer unter deiner Antwort angezeigt.",
         }
 
-    def _tool_get_document(self, tool_input: dict, sources: dict, source_meta: dict) -> dict:
+    def _tool_get_document(self, tool_input: dict, sources: dict, source_meta: dict):
         doc = self.retriever.get_document(tool_input.get("doc_id", ""))
         if "error" in doc:
             return doc
-        anchor = doc["chunk_ids"][0] if doc["chunk_ids"] else None
-        if anchor:
-            doc["quelle_nr"] = self._register_source(anchor, sources, source_meta)
-        return doc
+        # one citable search_result per leaf chunk, so citations resolve to the
+        # exact passage instead of just "somewhere in this document"
+        doc.pop("text", None)
+        blocks, nrs = [], []
+        for cid in doc["chunk_ids"]:
+            chunk = self.retriever.chunk_store.get(cid)
+            if chunk is None:
+                continue
+            nrs.append({"quelle_nr": self._register_source(cid, sources, source_meta),
+                        "chunk_id": cid})
+            blocks.append(self._sr_block(
+                chunk, chunk.text_regularized,
+                title=f"{doc['doc_title']} — {chunk.citation_label}",
+            ))
+        doc["abschnitte"] = nrs
+        return doc, blocks
 
     def _tool_query_measurements(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
         rows = self.retriever.query_measurements(
@@ -826,17 +1065,126 @@ class AgenticAnswerer:
         if not rows:
             return {"error": "Keine Messwerte gefunden. Versuche es ohne Filter oder mit "
                              "grep nach Zahlen+Einheit im Text."}
-        out = []
+        out, blocks, seen = [], [], set()
         for r in rows:
             nr = self._register_source(r["chunk_id"], sources, source_meta)
             out.append({
                 "quelle_nr": nr,
+                "chunk_id": r["chunk_id"],
                 "wert": r["value"],
                 "einheit": r["unit"],
                 "metrisch": f"{r['value_metric']} {r['unit_metric']}" if r["value_metric"] is not None else "",
                 "kontext": r["context"][:150],
             })
-        return out
+            if r["chunk_id"] not in seen:
+                seen.add(r["chunk_id"])
+                chunk = self.retriever.chunk_store.get(r["chunk_id"])
+                if chunk is not None:
+                    blocks.append(self._sr_block(
+                        chunk, chunk.text_regularized[:400],
+                        title=f"{chunk.citation_label} (Messwerte)", notes=[],
+                    ))
+        return out, blocks
+
+    # =========================================================================
+    # Entity co-occurrence network
+    # =========================================================================
+
+    def _chunk_entity_map(self) -> dict[str, set[str]]:
+        """chunk_id -> set of annotated humboldt_ids (lazy inverse index)."""
+        if self._chunk_entities is None:
+            m: dict[str, set[str]] = defaultdict(set)
+            for hid, cids in self.entity_index.chunk_index.items():
+                for cid in cids:
+                    m[cid].add(hid)
+            self._chunk_entities = m
+        return self._chunk_entities
+
+    def _tool_create_network(self, tool_input: dict, artifacts: list) -> dict:
+        focus_in = (tool_input.get("focus") or "").strip()
+        types = set(tool_input.get("entity_types") or [])
+        max_nodes = min(int(tool_input.get("max_nodes") or 20), 40)
+        min_shared = max(1, int(tool_input.get("min_shared") or 2))
+
+        ent = self.entity_index.entities.get(focus_in)
+        if ent is None:
+            hits = self.entity_index.lookup(focus_in, limit=1)
+            ent = hits[0] if hits else None
+        if ent is None:
+            return {"error": f"Entität „{focus_in}“ nicht im Register gefunden. "
+                             "Prüfe die Schreibweise mit lookup_entity."}
+        fid = ent["id"]
+        focus_chunks = set(self.entity_index.chunks_for(fid))
+        if not focus_chunks:
+            return {"error": f"Keine annotierten Erwähnungen für {ent['name']} ({fid})."}
+
+        cmap = self._chunk_entity_map()
+        co: Counter = Counter()
+        for cid in focus_chunks:
+            for hid in cmap.get(cid, ()):
+                if hid != fid:
+                    co[hid] += 1
+
+        # rank by distinctiveness (shared / sqrt(overall frequency)), so
+        # ubiquitous hubs like "Europa" don't drown out the actual circle
+        def affinity(hid: str, shared: int) -> float:
+            total = len(self.entity_index.chunk_index.get(hid, ())) or 1
+            return shared / total ** 0.5
+
+        ranked = sorted(co.items(), key=lambda kv: affinity(*kv), reverse=True)
+
+        def pick(threshold: int) -> list:
+            picked = []
+            for hid, w in ranked:
+                rec = self.entity_index.entities.get(hid)
+                if rec is None or w < threshold:
+                    continue
+                if types and rec["type"] not in types:
+                    continue
+                picked.append((hid, rec, w))
+                if len(picked) >= max_nodes:
+                    break
+            return picked
+
+        neighbors = pick(min_shared) or pick(1)
+        if not neighbors:
+            return {"error": f"Keine mit-erwähnten Registerentitäten für {ent['name']} gefunden."}
+
+        nodes = [{"id": fid, "label": ent["name"], "type": ent["type"],
+                  "weight": len(focus_chunks), "url": ent.get("url", ""), "focus": True}]
+        edges = []
+        nb_chunks = {}
+        for hid, rec, w in neighbors:
+            nodes.append({"id": hid, "label": rec["name"], "type": rec["type"],
+                          "weight": w, "url": rec.get("url", "")})
+            edges.append({"source": fid, "target": hid, "weight": w})
+            nb_chunks[hid] = set(self.entity_index.chunks_for(hid)) & focus_chunks
+        # edges among neighbors: co-occurrence within the focus passages;
+        # capped to the strongest links so the layout stays readable
+        cross = []
+        for (h1, _, _), (h2, _, _) in itertools.combinations(neighbors, 2):
+            shared = len(nb_chunks[h1] & nb_chunks[h2])
+            if shared >= min_shared:
+                cross.append({"source": h1, "target": h2, "weight": shared})
+        cross.sort(key=lambda e: e["weight"], reverse=True)
+        edges.extend(cross[: 2 * max_nodes])
+
+        title = tool_input.get("title") or f"Beziehungsnetz: {ent['name']}"
+        artifacts.append({"type": "network", "title": title,
+                          "nodes": nodes, "edges": edges})
+        return {
+            "ok": True,
+            "hinweis": f"Netzwerk „{title}“ mit {len(nodes)} Knoten und {len(edges)} "
+                       "Kanten wird dem Nutzer unter deiner Antwort angezeigt. Gehe in "
+                       "der Antwort auf die wichtigsten Verbindungen ein.",
+            "zentrale_entitaet": {"name": ent["name"], "typ": ent["type"],
+                                  "humboldt_id": fid, "passagen": len(focus_chunks)},
+            "wichtigste_nachbarn": [
+                {"name": rec["name"], "typ": rec["type"], "humboldt_id": hid,
+                 "gemeinsame_passagen": w}
+                for hid, rec, w in neighbors[:10]
+            ],
+        }
 
     # =========================================================================
     # Citations

@@ -62,6 +62,31 @@ class IngestionPipeline:
         self.chunk_store: dict[str, HumboldtChunk] = {}
         self.bm25_index = BM25Index()          # text chunks only
         self.entity_index = EntityIndex()
+        self._plant_names: dict[str, str] | None = None  # normalized name -> plant id
+
+    def _resolve_plant(self, name: str) -> str:
+        """Map a plant name (Latin binomial from @key, or as written) to its
+        plant-register ID. Falls back to the genus+species prefix, so
+        'Primula auricula L.' still hits 'Primula auricula'."""
+        if self._plant_names is None:
+            from src.retrieval.entity_index import normalize_name
+            self._plant_names = {}
+            for hid, rec in self.entity_index.entities.items():
+                if rec.get("type") == "plant":
+                    norm = normalize_name(rec["name"])
+                    if norm:
+                        self._plant_names[norm] = hid
+        from src.retrieval.entity_index import normalize_name
+        norm = normalize_name(name)
+        if not norm:
+            return ""
+        hit = self._plant_names.get(norm)
+        if hit:
+            return hit
+        tokens = norm.split()
+        if len(tokens) > 2:
+            return self._plant_names.get(" ".join(tokens[:2]), "")
+        return ""
 
     # =========================================================================
     # Text documents
@@ -81,11 +106,17 @@ class IngestionPipeline:
             is_leaf = not chunk.child_chunk_ids
             if is_leaf:
                 # Inverted entity index from the edition's annotations
-                for ent in chunk.persons + chunk.places:
+                for ent in chunk.persons + chunk.places + chunk.institutions:
                     if ent.humboldt_id:
                         self.entity_index.add_mention(
                             ent.humboldt_id, ent.name, chunk.chunk_id
                         )
+                # plant annotations carry no ref IDs — resolve by name
+                # against the plant register (requires registers ingested first)
+                for ent in chunk.plants:
+                    hid = ent.humboldt_id or self._resolve_plant(ent.name)
+                    if hid:
+                        self.entity_index.add_mention(hid, ent.name, chunk.chunk_id)
                 # Editorial notes as first-class retrievable units
                 for note in chunk.editorial_notes:
                     note_chunk = self._make_editorial_note_chunk(chunk, note, seen_notes)
@@ -181,6 +212,12 @@ class IngestionPipeline:
         corpus_dir = Path(corpus_dir)
         total = 0
 
+        # registers first: plant mentions in the texts resolve by name
+        # against the plant register
+        index_dir = corpus_dir / "index"
+        if index_dir.exists():
+            total += self.ingest_registers(index_dir)
+
         for subdir in TEXT_DIRS:
             dirpath = corpus_dir / subdir
             if not dirpath.exists():
@@ -193,10 +230,6 @@ class IngestionPipeline:
                     total += self.ingest_text_file(xml_file)
                 except Exception as e:
                     logger.error(f"Failed to ingest {xml_file.name}: {e}")
-
-        index_dir = corpus_dir / "index"
-        if index_dir.exists():
-            total += self.ingest_registers(index_dir)
 
         self.build_indexes()
         self.save()

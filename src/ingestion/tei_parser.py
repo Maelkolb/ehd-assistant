@@ -207,8 +207,7 @@ class TEIParser:
         date_display = self._format_date(date_iso)
 
         # Extract entities
-        persons = self._extract_entities(div, "persName", "person")
-        places = self._extract_entities(div, "placeName", "place")
+        ents = self._extract_all_entities(div)
         bibliography = self._extract_bibliography(div)
 
         # Extract measurements
@@ -239,8 +238,7 @@ class TEIParser:
             text_diplomatic=text_diplomatic,
             text_regularized=text_regularized,
             text_plain=text_plain,
-            persons=persons,
-            places=places,
+            **ents,
             bibliography=bibliography,
             measurements=measurements,
             editorial_notes=editorial_notes,
@@ -272,8 +270,7 @@ class TEIParser:
         if len(text.strip()) < 10:
             return []
 
-        persons = self._extract_entities(body, "persName", "person")
-        places = self._extract_entities(body, "placeName", "place")
+        ents = self._extract_all_entities(body)
 
         url = doc_meta.get("url_base", "")
 
@@ -286,8 +283,7 @@ class TEIParser:
             date_display=date_display,
             text_regularized=text,
             text_plain=self._normalize_for_search(text),
-            persons=persons,
-            places=places,
+            **ents,
             source_desc=doc_meta.get("source_desc", ""),
         )]
 
@@ -318,8 +314,7 @@ class TEIParser:
             date_iso = doc_meta.get("date_not_before", "")
         date_display = self._format_date(date_iso)
 
-        persons = self._extract_entities(body, "persName", "person")
-        places = self._extract_entities(body, "placeName", "place")
+        ents = self._extract_all_entities(body)
         bibliography = self._extract_bibliography(body)
         editorial_notes = self._extract_editorial_notes(body)
 
@@ -338,8 +333,7 @@ class TEIParser:
             date_display=date_display,
             text_regularized=text,
             text_plain=self._normalize_for_search(text),
-            persons=persons,
-            places=places,
+            **ents,
             bibliography=bibliography,
             editorial_notes=editorial_notes,
             source_desc=doc_meta.get("source_desc", ""),
@@ -391,8 +385,7 @@ class TEIParser:
                 return []
 
             folio = pbs[0].get("n", "") if pbs else ""
-            persons = self._extract_entities(body, "persName", "person")
-            places = self._extract_entities(body, "placeName", "place")
+            ents = self._extract_all_entities(body)
             bibliography = self._extract_bibliography(body)
             measurements = self._extract_measurements(body)
             editorial_notes = self._extract_editorial_notes(body)
@@ -415,8 +408,7 @@ class TEIParser:
                 date_display=date_display,
                 text_regularized=text,
                 text_plain=self._normalize_for_search(text),
-                persons=persons,
-                places=places,
+                **ents,
                 bibliography=bibliography,
                 measurements=measurements,
                 editorial_notes=editorial_notes,
@@ -437,8 +429,7 @@ class TEIParser:
         if len(text.strip()) < 20:
             return None
 
-        persons = self._extract_entities(wrapper, "persName", "person")
-        places = self._extract_entities(wrapper, "placeName", "place")
+        ents = self._extract_all_entities(wrapper)
         measurements = self._extract_measurements(wrapper)
         editorial_notes = self._extract_editorial_notes(wrapper)
 
@@ -460,8 +451,7 @@ class TEIParser:
             date_display=date_display,
             text_regularized=text,
             text_plain=self._normalize_for_search(text),
-            persons=persons,
-            places=places,
+            **ents,
             measurements=measurements,
             editorial_notes=editorial_notes,
             source_desc=doc_meta.get("source_desc", ""),
@@ -591,13 +581,29 @@ class TEIParser:
             return f"{months.get(parts[1], parts[1])} {parts[0]}"
         return parts[0]
 
-    def _extract_entities(self, elem, tag_name: str, entity_type: str) -> list[Entity]:
+    def _extract_all_entities(self, elem) -> dict:
+        """All annotated entity classes of one element, keyed by chunk field."""
+        return {
+            "persons": self._extract_entities(elem, "persName", "person"),
+            "places": self._extract_entities(elem, "placeName", "place"),
+            "institutions": self._extract_entities(elem, "orgName", "institution"),
+            # plant names carry no ref IDs; @key holds the normalized Latin
+            # binomial, which resolves against the plant register at ingest
+            "plants": self._extract_entities(
+                elem, "name[@type='plant']", "plant", prefer_key=True),
+        }
+
+    def _extract_entities(self, elem, tag_name: str, entity_type: str,
+                          prefer_key: bool = False) -> list[Entity]:
         """Extract named entities with authority file links."""
         entities = []
         seen = set()
 
         for ent_elem in elem.findall(f".//tei:{tag_name}", NS):
-            name = self._extract_text(ent_elem, mode="regularized")
+            if prefer_key and ent_elem.get("key"):
+                name = ent_elem.get("key")
+            else:
+                name = self._extract_text(ent_elem, mode="regularized")
             name = name.strip()
             if not name or len(name) < 2:
                 continue

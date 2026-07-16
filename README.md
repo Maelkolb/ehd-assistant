@@ -20,12 +20,23 @@ Agent loop (Claude + tools, max 4 tool rounds)
    ├─ get_document(doc_id)           → full document text
    ├─ query_measurements(unit?, q?)  → structured <measure> annotations (+ metric)
    ├─ create_map / create_timeline   → interactive Leaflet map / visual timeline in the widget
+   ├─ create_network(focus, types?)  → entity co-occurrence graph (persons/places/plants/institutions)
    ├─ code_execution (Sonnet/Opus)   → Anthropic server-side Python sandbox (calculations)
-   └─ answer with [Quelle N] citations
+   └─ answer with span-level API citations
 ```
 
-- **Registers** (17.5k persons/places/plants/glossary/institutions) never enter text ranking; they serve entity resolution and "Wer war X?" lookups.
-- **Editorial notes** are indexed as first-class chunks (`doc_type=editorial_note`) so the editors' voice is retrievable and attributable.
+- **Citations**: retrieval results go to the model as citations-enabled `search_result`
+  blocks, so every answer sentence carries exact quoted spans (Anthropic Citations API).
+  The widget renders them as numbered chips; clicking opens a **source panel** with the
+  cited passage highlighted, plus a deep link into edition-humboldt.de using
+  [Text Fragments](https://developer.mozilla.org/en-US/docs/Web/URI/Fragment/Text_fragments)
+  (`#:~:text=`). Fragments highlight reliably on research articles/chronology (modern
+  German); on diary folios the diplomatic rendering differs from the regularized text,
+  so links land on the correct page without the highlight. The legacy `[Quelle N]`
+  regex path remains as fallback.
+- **Registers** (17.5k persons/places/plants/glossary/institutions) never enter text ranking; they serve entity resolution and "Wer war X?" lookups. Text mentions are annotation-indexed for persons, places, institutions (`orgName`) and plants (`<name type="plant">`, resolved by Latin name against the plant register).
+- **Editorial notes** are indexed as first-class chunks (`doc_type=editorial_note`) so the editors' voice is retrievable and attributable; inside search results they are marked `[Editorische Anmerkung der Herausgeber]` and citations into them are flagged editorial.
+- **Prompt caching**: one breakpoint on system+tools, one advancing with the newest tool round.
 - The one-shot retrieve-then-generate path is kept behind `RETRIEVAL_MODE=oneshot` for A/B comparison; `/search` is the deterministic debug endpoint.
 
 ## Quick Start

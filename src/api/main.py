@@ -267,6 +267,7 @@ class ChatRequest(BaseModel):
 
 class Source(BaseModel):
     index: int
+    chunk_id: str = ""
     citation_label: str
     url: str
     score: float
@@ -276,11 +277,12 @@ class Source(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+    answer_blocks: list[dict] = []  # text blocks with span-level citations
     sources: list[Source]
     model: str
     chunks_retrieved: int
     trace: list[dict] = []
-    artifacts: list[dict] = []  # maps/timelines/images rendered by the widget
+    artifacts: list[dict] = []  # maps/timelines/networks/images rendered by the widget
     suggestions: list[str] = []
 
 class SearchRequest(BaseModel):
@@ -323,9 +325,11 @@ async def chat(request: ChatRequest, http_request: Request):
         )
         return ChatResponse(
             answer=result["answer"],
+            answer_blocks=result.get("answer_blocks", []),
             sources=[
                 Source(
                     index=s["index"],
+                    chunk_id=s.get("chunk_id", ""),
                     citation_label=s["citation_label"],
                     url=s.get("url", ""),
                     score=0.0,
@@ -474,6 +478,27 @@ async def search(request: SearchRequest):
         ))
 
     return SearchResponse(results=search_results, total=len(search_results))
+
+
+@app.get("/chunk/{chunk_id}")
+async def get_chunk(chunk_id: str):
+    """Full chunk for the source panel: text, editorial notes, metadata."""
+    chunk = pipeline.chunk_store.get(chunk_id) if pipeline else None
+    if chunk is None:
+        raise HTTPException(404, "Unbekannte chunk_id")
+    return {
+        "chunk_id": chunk.chunk_id,
+        "doc_id": chunk.doc_id,
+        "doc_title": chunk.doc_title,
+        "doc_type": chunk.doc_type,
+        "citation_label": chunk.citation_label,
+        "url": chunk.url,
+        "folio": chunk.folio_start,
+        "date": chunk.date_display or chunk.date_iso,
+        "text": chunk.text_regularized,
+        "editorial_notes": chunk.editorial_notes,
+        "source_desc": chunk.source_desc,
+    }
 
 
 @app.get("/health")

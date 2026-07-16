@@ -128,6 +128,8 @@ class ChunkingPipeline:
             text_plain=chunk.text_plain[:500],
             persons=chunk.persons,
             places=chunk.places,
+            institutions=chunk.institutions,
+            plants=chunk.plants,
             bibliography=chunk.bibliography,
             measurements=chunk.measurements,
             topics=chunk.topics,
@@ -167,6 +169,8 @@ class ChunkingPipeline:
             # Inherit all entities from parent
             persons=parent.persons,
             places=parent.places,
+            institutions=parent.institutions,
+            plants=parent.plants,
             bibliography=parent.bibliography,
             measurements=[m for m in parent.measurements if m.context and m.context in text],
             topics=parent.topics,

@@ -109,6 +109,8 @@ class HumboldtChunk:
     # === Extracted entities ===
     persons: list[Entity] = field(default_factory=list)
     places: list[Entity] = field(default_factory=list)
+    institutions: list[Entity] = field(default_factory=list)
+    plants: list[Entity] = field(default_factory=list)
     bibliography: list[Entity] = field(default_factory=list)
 
     # === Scientific data ===
@@ -203,6 +205,8 @@ class HumboldtChunk:
             "citation_label": self.citation_label,
             "persons": [p.to_dict() for p in self.persons],
             "places": [p.to_dict() for p in self.places],
+            "institutions": [p.to_dict() for p in self.institutions],
+            "plants": [p.to_dict() for p in self.plants],
             "measurements": [m.to_dict() for m in self.measurements],
             "topics": self.topics,
             "editorial_notes": self.editorial_notes,
@@ -215,8 +219,14 @@ class HumboldtChunk:
 
     @classmethod
     def from_dict(cls, d: dict) -> "HumboldtChunk":
-        persons = [Entity(name=p.get("name",""), entity_type=p.get("type","person"), humboldt_id=p.get("humboldt_id",""), gnd_id=p.get("gnd",""), geonames_id=p.get("geonames",""), viaf_id=p.get("viaf",""), lat=p.get("lat"), lon=p.get("lon")) if isinstance(p, dict) else p for p in d.get("persons", [])]
-        places = [Entity(name=p.get("name",""), entity_type=p.get("type","place"), humboldt_id=p.get("humboldt_id",""), gnd_id=p.get("gnd",""), geonames_id=p.get("geonames",""), viaf_id=p.get("viaf",""), lat=p.get("lat"), lon=p.get("lon")) if isinstance(p, dict) else p for p in d.get("places", [])]
+        def _entities(key: str, default_type: str) -> list[Entity]:
+            return [Entity(name=p.get("name", ""), entity_type=p.get("type", default_type),
+                           humboldt_id=p.get("humboldt_id", ""), gnd_id=p.get("gnd", ""),
+                           geonames_id=p.get("geonames", ""), viaf_id=p.get("viaf", ""),
+                           lat=p.get("lat"), lon=p.get("lon")) if isinstance(p, dict) else p
+                    for p in d.get(key, [])]
+        persons = _entities("persons", "person")
+        places = _entities("places", "place")
         measurements = [Measurement(**m) if isinstance(m, dict) else m for m in d.get("measurements", [])]
         return cls(
             chunk_id=d.get("chunk_id", ""),
@@ -233,6 +243,8 @@ class HumboldtChunk:
             text_plain=d.get("text_plain", ""),
             persons=persons,
             places=places,
+            institutions=_entities("institutions", "institution"),
+            plants=_entities("plants", "plant"),
             measurements=measurements,
             topics=d.get("topics", []),
             editorial_notes=d.get("editorial_notes", []),
