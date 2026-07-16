@@ -141,7 +141,7 @@ const I18N={
      spNotes:'Editorische Anmerkungen',spOpen:'Im Original öffnen ↗',spCited:'Zitierte Stelle hervorgehoben',spView:'Quelle ansehen',spLoading:'Lade Quelle…',spEd:'Editorischer Kommentar',
      exportTip:'Als eigenständige HTML-Datei herunterladen',fullscreenTip:'Vollbild',
      models:{'claude-haiku-4-5':'Haiku (schnell)','claude-sonnet-5':'Sonnet (ausgewogen)','claude-opus-4-8':'Opus (gründlich)'},
-     tools:{lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext',where_was_humboldt:'📅 Chronologie',create_map:'🗺️ Karte',create_timeline:'📈 Zeitleiste',create_network:'🕸️ Netzwerk',get_document:'📜 Dokument',query_measurements:'📏 Messwerte',code_execution:'🐍 Code'},
+     tools:{lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext',where_was_humboldt:'📅 Chronologie',create_map:'🗺️ Karte',create_timeline:'📈 Zeitleiste',create_network:'🕸️ Netzwerk',get_document:'📜 Dokument',query_measurements:'📏 Messwerte',code_execution:'🐍 Code',repair_citations:'🩹 Zitate nachtragen'},
      examples:['Welche Messungen machte Humboldt am Königstein?','Wen traf Humboldt in Wien?','Wer war Bonpland?','Erstelle eine Karte der Italienreise 1805']},
  en:{sub:'Alex · Research Assistant',wh:'Ask Alex',
      wp:"I'm Alex — I search Alexander von Humboldt's travel journals, letters and documents.",
@@ -152,7 +152,7 @@ const I18N={
      spNotes:'Editorial notes',spOpen:'Open in the edition ↗',spCited:'Cited passage highlighted',spView:'View source',spLoading:'Loading source…',spEd:'Editorial note',
      exportTip:'Download as standalone HTML file',fullscreenTip:'Fullscreen',
      models:{'claude-haiku-4-5':'Haiku (fast)','claude-sonnet-5':'Sonnet (balanced)','claude-opus-4-8':'Opus (thorough)'},
-     tools:{lookup_entity:'📇 Index',chunks_for_entity:'🔗 Annotated passages',search:'🔍 Search',grep:'⌕ Grep',get_context:'📄 Context',where_was_humboldt:'📅 Chronology',create_map:'🗺️ Map',create_timeline:'📈 Timeline',create_network:'🕸️ Network',get_document:'📜 Document',query_measurements:'📏 Measurements',code_execution:'🐍 Code'},
+     tools:{lookup_entity:'📇 Index',chunks_for_entity:'🔗 Annotated passages',search:'🔍 Search',grep:'⌕ Grep',get_context:'📄 Context',where_was_humboldt:'📅 Chronology',create_map:'🗺️ Map',create_timeline:'📈 Timeline',create_network:'🕸️ Network',get_document:'📜 Document',query_measurements:'📏 Measurements',code_execution:'🐍 Code',repair_citations:'🩹 Repairing citations'},
      examples:['What measurements did Humboldt take at the Königstein?','Whom did Humboldt meet in Vienna?','Who was Bonpland?','Create a map of the 1805 Italy journey']}
 };
 let LANG=localStorage.getItem('humboldt_lang')||'de';
@@ -660,6 +660,8 @@ async function send(){
         res.textContent=' → '+ev.n+' '+L2.hits+(ev.preview&&ev.preview.length?': '+ev.preview.slice(0,2).join(' · '):'');
         pendingLine.appendChild(res);pendingLine=null}
       autoscroll();
+    }else if(ev.type==='live_reset'){
+      liveText='';live.textContent='';
     }else if(ev.type==='answer_delta'){
       liveText+=ev.text;live.textContent=liveText;autoscroll();
     }else if(ev.type==='answer'){

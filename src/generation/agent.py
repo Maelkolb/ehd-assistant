@@ -108,6 +108,9 @@ Empfohlene Strategie:
 2. Bei thematischen Fragen: `search`, ggf. mit Datums-/Typfiltern.
 3. Bei Itinerar-/Reisefragen: `where_was_humboldt`; für Kartenwünsche danach `create_map`.
 4. Bei Fragen zu Messungen: `query_measurements`, ergänzend `grep`.
+5. Für Einordnung, Kontext und Forschungsstand: IMMER auch `search` mit \
+   doc_types=["research_article"] — die Forschungsbeiträge der Edition liefern die \
+   wissenschaftliche Interpretation, die Tagebücher nur den Befund.
 5. Historische Schreibweisen beachten: Die Texte sind in Deutsch, Französisch und Spanisch \
    des 18./19. Jahrhunderts verfasst. Probiere bei `search`/`grep` auch zeitgenössische \
    Varianten (z. B. "Crocodile"/"Cocodrilo" statt "Krokodil").
@@ -118,9 +121,11 @@ beende einen Zug niemals mit "Ich erstelle …".
 
 ## Antwortregeln
 - Belege jede faktische Aussage durch Zitieren der Suchergebnisse — die Zitierfunktion \
-  verknüpft deine Sätze automatisch mit den Fundstellen. Zitiere nur Ergebnisse, die du \
-  tatsächlich gesehen hast, und schreibe KEINE eigenen Quellennummern wie "[Quelle 3]" \
-  in den Antworttext.
+  verknüpft deine Sätze automatisch mit den Fundstellen. Zitiere DURCHGÄNGIG: Auch in \
+  langen Antworten muss jeder Absatz mit Fakten mindestens ein Zitat tragen; eine \
+  Antwort ganz ohne Zitate ist ein Fehler. Zitiere nur Ergebnisse, die du tatsächlich \
+  gesehen hast, und schreibe KEINE eigenen Quellennummern wie "[Quelle 3]" in den \
+  Antworttext.
 - Unterscheide klar zwischen Humboldts eigenem Text und editorischen Kommentaren \
   ("Laut Anmerkung der Herausgeber ..." — Inhalte, die mit \
   "[Editorische Anmerkung der Herausgeber]" markiert sind, sowie Quellen vom Typ \
@@ -459,7 +464,9 @@ class AgenticAnswerer:
                 messages.append({
                     "role": "user",
                     "content": "Werkzeugbudget erschöpft. Beantworte die Frage jetzt "
-                               "auf Basis der bisherigen Ergebnisse (mit [Quelle N]).",
+                               "auf Basis der bisherigen Ergebnisse und belege deine "
+                               "Aussagen durch Zitieren der Suchergebnisse. Antworte "
+                               "in der Sprache der Nutzerfrage.",
                 })
 
             try:
@@ -570,6 +577,41 @@ class AgenticAnswerer:
         if not cited:
             cited = self._extract_citations(answer_text, source_meta)
             answer_blocks = []
+
+        # Backstop: models occasionally produce a long synthesis without a
+        # single citation. One repair pass re-emits the answer with citations
+        # (replaces the uncited text; costs one extra generation, rare).
+        if (not cited and source_meta and len(answer_text) > 400
+                and response is not None
+                and os.environ.get("CITATION_REPAIR", "1") != "0"):
+            logger.warning("Answer had no citations — running repair pass")
+            yield {"type": "tool_call", "round": rounds_used + 1,
+                   "tool": "repair_citations", "input": {}}
+            yield {"type": "live_reset"}
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content":
+                "Deine Antwort enthält keine Zitate. Gib exakt dieselbe Antwort "
+                "(gleiche Sprache, gleicher Inhalt) noch einmal vollständig aus, "
+                "aber belege sie durchgängig über die Zitierfunktion mit den "
+                "Suchergebnissen — mindestens ein Zitat pro Absatz."})
+            try:
+                retry_kwargs = dict(model=active_model, max_tokens=max_tokens,
+                                    system=system, messages=messages, tools=tools,
+                                    tool_choice={"type": "none"})
+                response = yield from self._stream_round(retry_kwargs)
+                retry_text = [b for b in response.content if getattr(b, "type", "") == "text"]
+                if any((b.text or "").strip() for b in retry_text):
+                    text_rounds = [retry_text]
+                    answer_text = "".join(b.text for b in retry_text).strip()
+                    answer_blocks, cited = self._collect_api_citations(
+                        text_rounds, sources, source_meta)
+                    if not cited:
+                        cited = self._extract_citations(answer_text, source_meta)
+                        answer_blocks = []
+                yield {"type": "tool_result", "tool": "repair_citations",
+                       "n": len(cited), "preview": []}
+            except Exception as e:
+                logger.warning(f"Citation repair failed: {e}")
         elapsed = round(time.time() - t0, 2)
         usage = getattr(response, "usage", None)
         if usage is not None:
