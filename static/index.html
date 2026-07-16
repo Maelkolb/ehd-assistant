@@ -66,9 +66,18 @@ header .sub{font-size:.85rem;opacity:.8;font-style:italic}
 details.trace-box{margin-bottom:.75rem;padding:.5rem .75rem;background:#f4f6f4;border:1px solid #e0e6e0;border-radius:.5rem}
 details.trace-box summary{cursor:pointer;font-size:.8rem;color:#557055;font-family:ui-monospace,Menlo,Consolas,monospace}
 .artifact{margin-top:1rem;border:1px solid var(--border);border-radius:.5rem;overflow:hidden}
-.artifact .a-title{background:#f4f6f4;padding:.5rem .75rem;font-size:.85rem;font-weight:600;color:#446644}
+.artifact .a-title{background:#f4f6f4;padding:.5rem .75rem;font-size:.85rem;font-weight:600;color:#446644;display:flex;justify-content:space-between;align-items:center;gap:.5rem}
+.a-btns{display:flex;gap:.35rem;flex-shrink:0}
+.a-btns button{background:#fff;border:1px solid #c8d8ca;border-radius:.4rem;padding:.1rem .5rem;font-size:.72rem;color:var(--primary);cursor:pointer;font-family:inherit;font-weight:400}
+.a-btns button:hover{background:#e8f0e9}
+.artifact:fullscreen{background:#fff;display:flex;flex-direction:column}
+.artifact:fullscreen .map-div{flex:1;height:auto}
 .artifact .map-div{height:380px;width:100%}
 .artifact img{max-width:100%;display:block}
+.tline .yr{font-weight:700;color:var(--primary);font-size:.82rem;letter-spacing:.06em;margin:.7rem 0 .55rem;font-family:ui-monospace,monospace}
+.tline .yr .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:.45rem;vertical-align:baseline}
+.tline .ev-body{padding:.1rem .4rem;border-radius:.35rem;transition:background .15s}
+.tline .ev:hover .ev-body{background:#f0f4f0}
 .map-marker{background:var(--primary);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
 .tline{padding:.75rem 1rem}
 .tline .ev{display:flex;gap:.75rem;position:relative;padding-bottom:.9rem}
@@ -130,6 +139,7 @@ const I18N={
      share:'🔗 Link teilen',linkCopied:'✓ Link kopiert',citeTip:'Zitat kopieren',citeCopied:'✓ Zitat kopiert',
      followups:'Weiterfragen:',reset:'Neues Gespräch',accessed:'abgerufen am',
      spNotes:'Editorische Anmerkungen',spOpen:'Im Original öffnen ↗',spCited:'Zitierte Stelle hervorgehoben',spView:'Quelle ansehen',spLoading:'Lade Quelle…',spEd:'Editorischer Kommentar',
+     exportTip:'Als eigenständige HTML-Datei herunterladen',fullscreenTip:'Vollbild',
      models:{'claude-haiku-4-5':'Haiku (schnell)','claude-sonnet-5':'Sonnet (ausgewogen)','claude-opus-4-8':'Opus (gründlich)'},
      tools:{lookup_entity:'📇 Register',chunks_for_entity:'🔗 Annotierte Stellen',search:'🔍 Suche',grep:'⌕ Grep',get_context:'📄 Kontext',where_was_humboldt:'📅 Chronologie',create_map:'🗺️ Karte',create_timeline:'📈 Zeitleiste',create_network:'🕸️ Netzwerk',get_document:'📜 Dokument',query_measurements:'📏 Messwerte',code_execution:'🐍 Code'},
      examples:['Welche Messungen machte Humboldt am Königstein?','Wen traf Humboldt in Wien?','Wer war Bonpland?','Erstelle eine Karte der Italienreise 1805']},
@@ -140,6 +150,7 @@ const I18N={
      share:'🔗 Share link',linkCopied:'✓ Link copied',citeTip:'Copy citation',citeCopied:'✓ Citation copied',
      followups:'Follow up:',reset:'New conversation',accessed:'accessed',
      spNotes:'Editorial notes',spOpen:'Open in the edition ↗',spCited:'Cited passage highlighted',spView:'View source',spLoading:'Loading source…',spEd:'Editorial note',
+     exportTip:'Download as standalone HTML file',fullscreenTip:'Fullscreen',
      models:{'claude-haiku-4-5':'Haiku (fast)','claude-sonnet-5':'Sonnet (balanced)','claude-opus-4-8':'Opus (thorough)'},
      tools:{lookup_entity:'📇 Index',chunks_for_entity:'🔗 Annotated passages',search:'🔍 Search',grep:'⌕ Grep',get_context:'📄 Context',where_was_humboldt:'📅 Chronology',create_map:'🗺️ Map',create_timeline:'📈 Timeline',create_network:'🕸️ Network',get_document:'📜 Document',query_measurements:'📏 Measurements',code_execution:'🐍 Code'},
      examples:['What measurements did Humboldt take at the Königstein?','Whom did Humboldt meet in Vienna?','Who was Bonpland?','Create a map of the 1805 Italy journey']}
@@ -237,6 +248,10 @@ async function openPanel(cite){
   const url=cite.fragment_url||c.url;
   if(url){const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.textContent=t.spOpen;foot.appendChild(a)}
 }
+function alen(x){
+  if(Array.isArray(x))return x.length;
+  if(typeof x==='string'){try{const p=JSON.parse(x);if(Array.isArray(p))return p.length}catch(e){}}
+  return 0}
 function argSummary(tool,inp){
   if(!inp)return'';
   if(tool==='search'){let s='„'+(inp.query||'')+'“';if(inp.doc_types)s+=' ['+inp.doc_types.join(',')+']';if(inp.date_from||inp.date_to)s+=' '+(inp.date_from||'')+'–'+(inp.date_to||'');return s}
@@ -245,8 +260,8 @@ function argSummary(tool,inp){
   if(tool==='chunks_for_entity')return inp.humboldt_id||'';
   if(tool==='get_context')return inp.chunk_id||'';
   if(tool==='where_was_humboldt')return (inp.date_from||'')+(inp.date_to&&inp.date_to!==inp.date_from?' – '+inp.date_to:'');
-  if(tool==='create_map')return'„'+(inp.title||'')+'“ ('+((inp.stations||[]).length)+')';
-  if(tool==='create_timeline')return'„'+(inp.title||'')+'“ ('+((inp.events||[]).length)+')';
+  if(tool==='create_map')return'„'+(inp.title||'')+'“ ('+alen(inp.stations)+')';
+  if(tool==='create_timeline')return'„'+(inp.title||'')+'“ ('+alen(inp.events)+')';
   if(tool==='create_network')return'„'+(inp.focus||'')+'“'+(inp.entity_types?' ['+inp.entity_types.join(',')+']':'');
   if(tool==='get_document')return inp.doc_id||'';
   if(tool==='query_measurements')return[inp.unit,inp.context_contains].filter(Boolean).join(' · ');
@@ -270,32 +285,96 @@ function citationFor(s){
   const label=s.doc_title?(s.doc_title+' ('+s.citation_label+')'):s.citation_label;
   return label+'. In: edition humboldt digital, hg. v. Ottmar Ette. Berlin-Brandenburgische Akademie der Wissenschaften, Berlin.'+(s.url?' '+s.url:'')+' ('+t.accessed+' '+today+').'}
 
+// --- shared artifact helpers -------------------------------------------------
+const ERA_COLORS=['#2c5530','#1d6fa5','#8a5a83','#b8860b','#a04b3c','#4a7d8c'];
+const MON={de:['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'],
+           en:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']};
+function yearOf(d){const m=/(\d{4})/.exec(d||'');return m?m[1]:''}
+function eraColorMap(items,get){
+  const map={};let i=0;
+  (items||[]).forEach(it=>{const y=yearOf(get(it));if(y&&!(y in map))map[y]=ERA_COLORS[i++%ERA_COLORS.length]});
+  return map}
+function shortDate(d){
+  const m=/^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?$/.exec((d||'').trim());
+  if(!m)return d||'';
+  if(!m[2])return'';
+  const mon=(MON[LANG]||MON.de)[+m[2]-1]||m[2];
+  return(m[3]?(+m[3])+'. ':'')+mon}
+function downloadHTML(name,html){
+  const blob=new Blob([html],{type:'text/html;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
+function slugify(t){return((t||'').toLowerCase().replace(/[^a-z0-9äöüß]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60))||'export'}
+
 function renderArtifact(art,container){
+  const t=T();
   const box=document.createElement('div');box.className='artifact';
-  if(art.title){const tt=document.createElement('div');tt.className='a-title';tt.textContent=art.title;box.appendChild(tt)}
+  const exportable=art.type==='map'||art.type==='timeline';
+  if(art.title||exportable){
+    const tt=document.createElement('div');tt.className='a-title';
+    const sp=document.createElement('span');sp.textContent=art.title||'';tt.appendChild(sp);
+    const btns=document.createElement('span');btns.className='a-btns';tt.appendChild(btns);
+    if(exportable){
+      const ex=document.createElement('button');ex.textContent='⬇ HTML';ex.title=t.exportTip;
+      ex.onclick=()=>exportArtifact(art);btns.appendChild(ex);
+    }
+    if(art.type==='map'){
+      const fs=document.createElement('button');fs.textContent='⛶';fs.title=t.fullscreenTip;
+      fs.onclick=()=>{if(document.fullscreenElement)document.exitFullscreen();else box.requestFullscreen()};
+      btns.appendChild(fs);
+    }
+    box.appendChild(tt);
+  }
   container.appendChild(box);
   if(art.type==='map'&&window.L){
     const mdiv=document.createElement('div');mdiv.className='map-div';box.appendChild(mdiv);
+    const stations=art.stations||[];
+    const colors=eraColorMap(stations,s=>s.date);
+    const years=Object.keys(colors);
+    if(years.length>1){
+      const lg=document.createElement('div');lg.className='net-legend';
+      years.forEach(y=>{const s=document.createElement('span');
+        s.innerHTML='<span class="dot" style="background:'+colors[y]+'"></span>'+esc(y);lg.appendChild(s)});
+      box.appendChild(lg);
+    }
     setTimeout(()=>{
       const map=L.map(mdiv,{scrollWheelZoom:false});
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+        {attribution:'© OpenStreetMap © CARTO',subdomains:'abcd',maxZoom:19}).addTo(map);
+      L.control.scale({imperial:false}).addTo(map);
       const pts=[];
-      (art.stations||[]).forEach((st,i)=>{
+      stations.forEach((st,i)=>{
         const ll=[st.lat,st.lon];pts.push(ll);
-        const ic=L.divIcon({className:'',html:'<div class="map-marker">'+(i+1)+'</div>',iconSize:[22,22],iconAnchor:[11,11]});
+        const col=colors[yearOf(st.date)]||'#2c5530';
+        const ic=L.divIcon({className:'',html:'<div class="map-marker" style="background:'+col+'">'+(i+1)+'</div>',iconSize:[22,22],iconAnchor:[11,11]});
         let pop='<b>'+(i+1)+'. '+esc(st.label)+'</b>';
         if(st.date)pop+='<br>'+esc(st.date);
         if(st.url)pop+='<br><a href="'+esc(st.url)+'" target="_blank">Register</a>';
-        L.marker(ll,{icon:ic}).addTo(map).bindPopup(pop);
+        L.marker(ll,{icon:ic}).addTo(map).bindPopup(pop)
+          .bindTooltip(esc(st.label)+(st.date?' · '+esc(st.date):''),{direction:'top',offset:[0,-12]});
       });
       if(art.connect_route&&pts.length>1)L.polyline(pts,{color:'#2c5530',weight:2.5,opacity:.75,dashArray:'6 6'}).addTo(map);
       if(pts.length)map.fitBounds(pts,{padding:[28,28]});
+      box.addEventListener('fullscreenchange',()=>setTimeout(()=>{
+        map.invalidateSize();
+        if(pts.length)map.fitBounds(pts,{padding:[28,28]});
+      },150));
     },50);
   }else if(art.type==='timeline'){
     const tl=document.createElement('div');tl.className='tline';
-    (art.events||[]).forEach(ev=>{
+    const evs=art.events||[];
+    const colors=eraColorMap(evs,e=>e.date);
+    let lastYr=null;
+    evs.forEach(ev=>{
+      const y=yearOf(ev.date);
+      if(y&&y!==lastYr){lastYr=y;
+        const yr=document.createElement('div');yr.className='yr';
+        yr.innerHTML='<span class="dot" style="background:'+(colors[y]||'#2c5530')+'"></span>'+esc(y);
+        tl.appendChild(yr);}
       const row=document.createElement('div');row.className='ev';
-      row.innerHTML='<div class="dt">'+esc(ev.date)+'</div><div class="dot"></div>'+
+      const ds=shortDate(ev.date)||(y?'':ev.date);
+      row.innerHTML='<div class="dt">'+esc(ds)+'</div><div class="dot" style="background:'+(colors[y]||'#2c5530')+'"></div>'+
         '<div class="ev-body"><span class="lbl">'+esc(ev.label)+'</span>'+
         (ev.description?'<div class="dsc">'+esc(ev.description)+'</div>':'')+
         (ev.url?'<a href="'+esc(ev.url)+'" target="_blank">→ Quelle</a>':'')+'</div>';
@@ -309,6 +388,75 @@ function renderArtifact(art,container){
     img.src='data:'+(art.media_type||'image/png')+';base64,'+art.data;
     img.alt=art.title||'';box.appendChild(img);
   }
+}
+
+// --- standalone HTML export for maps and timelines ---------------------------
+function exportArtifact(art){
+  const credit=LANG==='de'?'erstellt mit Alex · edition humboldt digital':'created with Alex · edition humboldt digital';
+  if(art.type==='map')downloadHTML(slugify(art.title)+'.html',mapExportHTML(art,credit));
+  else if(art.type==='timeline')downloadHTML(slugify(art.title)+'.html',timelineExportHTML(art,credit));
+}
+function mapExportHTML(art,credit){
+  // stations are HTML-escaped up front — the embedded script inserts them into popups
+  const colors=eraColorMap(art.stations||[],s=>s.date);
+  const stations=(art.stations||[]).map(s=>({lat:s.lat,lon:s.lon,label:esc(s.label||''),date:esc(s.date||''),url:esc(s.url||''),color:colors[yearOf(s.date)]||'#2c5530'}));
+  const data=JSON.stringify({connect_route:art.connect_route!==false,stations}).replace(/</g,'\\u003c');
+  return `<!DOCTYPE html><html lang="${LANG}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(art.title||'Karte')}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
+<style>html,body{margin:0;height:100%;font-family:Georgia,serif}body{display:flex;flex-direction:column}
+header{background:#2c5530;color:#fff;padding:.8rem 1.2rem;font-size:1.05rem}
+#map{flex:1}footer{padding:.4rem 1.2rem;font-size:.75rem;color:#777;background:#fafaf8}
+.map-marker{background:#2c5530;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}</style>
+</head><body><header>${esc(art.title||'Karte')}</header><div id="map"></div><footer>${esc(credit)}</footer>
+<script>
+const DATA=${data};
+const map=L.map('map');
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{attribution:'© OpenStreetMap © CARTO',subdomains:'abcd',maxZoom:19}).addTo(map);
+L.control.scale({imperial:false}).addTo(map);
+const pts=[];
+DATA.stations.forEach((st,i)=>{
+  const ll=[st.lat,st.lon];pts.push(ll);
+  const ic=L.divIcon({className:'',html:'<div class="map-marker" style="background:'+st.color+'">'+(i+1)+'</div>',iconSize:[22,22],iconAnchor:[11,11]});
+  let pop='<b>'+(i+1)+'. '+st.label+'</b>';
+  if(st.date)pop+='<br>'+st.date;
+  if(st.url)pop+='<br><a href="'+st.url+'" target="_blank">Register</a>';
+  L.marker(ll,{icon:ic}).addTo(map).bindPopup(pop).bindTooltip(st.label,{direction:'top',offset:[0,-12]});
+});
+if(DATA.connect_route&&pts.length>1)L.polyline(pts,{color:'#2c5530',weight:2.5,opacity:.75,dashArray:'6 6'}).addTo(map);
+if(pts.length)map.fitBounds(pts,{padding:[28,28]});
+<\/script></body></html>`;
+}
+function timelineExportHTML(art,credit){
+  const evs=art.events||[];
+  const colors=eraColorMap(evs,e=>e.date);
+  let rows='',lastYr=null;
+  evs.forEach(ev=>{
+    const y=yearOf(ev.date);
+    if(y&&y!==lastYr){lastYr=y;rows+='<div class="yr"><span class="ydot" style="background:'+(colors[y]||'#2c5530')+'"></span>'+esc(y)+'</div>'}
+    const ds=shortDate(ev.date)||(y?'':ev.date);
+    rows+='<div class="ev"><div class="dt">'+esc(ds)+'</div><div class="dot" style="background:'+(colors[y]||'#2c5530')+'"></div><div class="ev-body"><span class="lbl">'+esc(ev.label)+'</span>'
+      +(ev.description?'<div class="dsc">'+esc(ev.description)+'</div>':'')
+      +(ev.url?'<a href="'+esc(ev.url)+'" target="_blank">→ Quelle</a>':'')+'</div></div>';
+  });
+  return `<!DOCTYPE html><html lang="${LANG}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(art.title||'Zeitleiste')}</title>
+<style>body{margin:0;font-family:Georgia,serif;background:#fafaf8;color:#2a2a2a}
+header{background:#2c5530;color:#fff;padding:.8rem 1.2rem;font-size:1.05rem}
+.tline{max-width:760px;margin:1rem auto;padding:.75rem 1rem}
+.yr{font-weight:700;color:#2c5530;font-size:.85rem;letter-spacing:.06em;margin:.8rem 0 .55rem;font-family:ui-monospace,monospace}
+.ydot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:.45rem}
+.ev{display:flex;gap:.75rem;position:relative;padding-bottom:.9rem}
+.ev::before{content:'';position:absolute;left:4.7rem;top:1.2rem;bottom:0;width:2px;background:#c8d8ca}
+.ev:last-child::before{display:none}
+.dt{flex:0 0 4.2rem;text-align:right;font-size:.75rem;color:#2c5530;font-weight:700;font-family:ui-monospace,monospace;padding-top:.1rem}
+.dot{flex:0 0 12px;height:12px;border-radius:50%;background:#2c5530;margin-top:.2rem;z-index:1}
+.ev-body{flex:1;font-size:.92rem;line-height:1.55}
+.lbl{font-weight:600}.dsc{color:#666;font-size:.84rem}
+.ev-body a{color:#2c5530;font-size:.78rem}
+footer{padding:.5rem 1.2rem;font-size:.75rem;color:#777}</style>
+</head><body><header>${esc(art.title||'Zeitleiste')}</header><div class="tline">${rows}</div><footer>${esc(credit)}</footer></body></html>`;
 }
 
 // --- entity co-occurrence network (canvas force layout, no deps) ------------

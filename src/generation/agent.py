@@ -662,10 +662,32 @@ class AgenticAnswerer:
     # Tool dispatch
     # =========================================================================
 
+    # array-valued tool arguments that models occasionally emit as
+    # JSON-encoded strings (observed on Sonnet with large create_map /
+    # create_timeline payloads — the string iterates to zero valid items)
+    _LIST_ARGS = frozenset({"stations", "events", "doc_types", "entity_types"})
+
+    @classmethod
+    def _coerce_tool_input(cls, tool_input: dict) -> dict:
+        if not isinstance(tool_input, dict):
+            return tool_input
+        out = dict(tool_input)
+        for key in cls._LIST_ARGS & out.keys():
+            v = out[key]
+            if isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(parsed, list):
+                    out[key] = parsed
+        return out
+
     def _dispatch(self, name: str, tool_input: dict, sources: dict, source_meta: dict,
                   artifacts: list | None = None) -> dict:
         if artifacts is None:
             artifacts = []
+        tool_input = self._coerce_tool_input(tool_input)
         try:
             if name == "lookup_entity":
                 out = self._tool_lookup_entity(tool_input, sources, source_meta)
