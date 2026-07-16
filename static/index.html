@@ -176,7 +176,11 @@ function toggleLang(){LANG=LANG==='de'?'en':'de';localStorage.setItem('humboldt_
 applyLang();
 function ask(b){q.value=b.textContent;send()}
 function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
-function add(r,h){const d=document.createElement('div');d.className='msg '+r;d.innerHTML='<div class="b">'+(r==='user'?esc(h):h)+'</div>';chat.appendChild(d);chat.scrollTop=1e6;return d}
+// only autoscroll while the user is already near the bottom — otherwise
+// streaming would keep yanking them back down while they read older messages
+function autoscroll(force){
+  if(force||chat.scrollHeight-chat.scrollTop-chat.clientHeight<140)chat.scrollTop=chat.scrollHeight}
+function add(r,h){const d=document.createElement('div');d.className='msg '+r;d.innerHTML='<div class="b">'+(r==='user'?esc(h):h)+'</div>';chat.appendChild(d);autoscroll(r==='user');return d}
 function resetChat(){convo=[];history.replaceState(null,'',location.pathname);document.querySelectorAll('.msg').forEach(m=>m.remove());wel.style.display='';q.focus()}
 function mdfmt(a){
   return a.replace(/^### (.*)$/gm,'<b>$1</b>').replace(/^## (.*)$/gm,'<b>$1</b>').replace(/^# (.*)$/gm,'<b>$1</b>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>')}
@@ -598,7 +602,7 @@ function renderAnswer(bubble,queryText,d,traceEl){
     }catch(e){console.warn(e)}
   };
   actions.appendChild(sh);bubble.appendChild(actions);
-  chat.scrollTop=1e6;
+  autoscroll();
 }
 
 function renderChips(bubble,questions){
@@ -609,7 +613,7 @@ function renderChips(bubble,questions){
     const b=document.createElement('button');b.textContent=qq;
     b.onclick=()=>{q.value=qq;send()};wrap.appendChild(b);
   });
-  bubble.appendChild(wrap);chat.scrollTop=1e6;
+  bubble.appendChild(wrap);autoscroll();
 }
 
 async function send(){
@@ -645,18 +649,19 @@ async function send(){
 
   function handle(ev){
     if(ev.type==='tool_call'){
-      liveText='';live.textContent='';
+      // keep already-streamed text visible — it is part of the final answer
+      if(liveText&&!liveText.endsWith('\n\n')){liveText+='\n\n';live.textContent=liveText}
       pendingLine=document.createElement('span');pendingLine.className='tl pending';
       pendingLine.innerHTML='<span class="tool">'+(L2.tools[ev.tool]||ev.tool)+'</span> <span class="args">'+esc(argSummary(ev.tool,ev.input))+'</span>';
-      traceEl.appendChild(pendingLine);chat.scrollTop=1e6;
+      traceEl.appendChild(pendingLine);autoscroll();
     }else if(ev.type==='tool_result'){
       if(pendingLine){pendingLine.classList.remove('pending');
         const res=document.createElement('span');res.className='res';
         res.textContent=' → '+ev.n+' '+L2.hits+(ev.preview&&ev.preview.length?': '+ev.preview.slice(0,2).join(' · '):'');
         pendingLine.appendChild(res);pendingLine=null}
-      chat.scrollTop=1e6;
+      autoscroll();
     }else if(ev.type==='answer_delta'){
-      liveText+=ev.text;live.textContent=liveText;chat.scrollTop=1e6;
+      liveText+=ev.text;live.textContent=liveText;autoscroll();
     }else if(ev.type==='answer'){
       think.remove();
       renderAnswer(bubble,t,ev.data,traceEl);

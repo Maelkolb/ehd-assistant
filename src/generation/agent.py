@@ -112,6 +112,9 @@ Empfohlene Strategie:
    des 18./19. Jahrhunderts verfasst. Probiere bei `search`/`grep` auch zeitgenössische \
    Varianten (z. B. "Crocodile"/"Cocodrilo" statt "Krokodil").
 Du hast maximal {max_rounds} Werkzeugrunden — recherchiere gezielt, nicht erschöpfend.
+Kündige Werkzeuge nie bloß an: Wenn du eine Karte, Zeitleiste oder ein Netzwerk \
+erstellen willst, rufe das Werkzeug JETZT auf, bevor du deine Antwort beendest — \
+beende einen Zug niemals mit "Ich erstelle …".
 
 ## Antwortregeln
 - Belege jede faktische Aussage durch Zitieren der Suchergebnisse — die Zitierfunktion \
@@ -123,7 +126,11 @@ Du hast maximal {max_rounds} Werkzeugrunden — recherchiere gezielt, nicht ersc
   "[Editorische Anmerkung der Herausgeber]" markiert sind, sowie Quellen vom Typ \
   editorial_note).
 - Wenn die Recherche nichts Belastbares ergibt, sage das ehrlich.
-- Antworte in der Sprache der Frage (Deutsch, Englisch oder Französisch).
+- WICHTIG: Antworte IMMER in der Sprache der Nutzerfrage. Eine englische Frage bekommt \
+  eine vollständig englische Antwort, eine französische eine französische — auch wenn \
+  alle Quellen und Werkzeugergebnisse deutsch sind. Das gilt auch für die Titel von \
+  Karten, Zeitleisten und Netzwerken (übersetze sie; Zitate aus den Quellen bleiben \
+  natürlich im Original).
 - Antworte konkret, mit Namen, Daten, Orten und Messwerten aus den Quellen.
 - Erfinde keine Quellenangaben und keine Inhalte."""
 
@@ -414,10 +421,27 @@ class AgenticAnswerer:
             "text": SYSTEM_PROMPT.format(max_rounds=MAX_TOOL_ROUNDS),
             "cache_control": {"type": "ephemeral"},
         }]
+        # explicit language hint AFTER the breakpoint (cache stays warm):
+        # the German prompt + German sources otherwise pull answers into German
+        lang = self._detect_lang(query)
+        if lang == "en":
+            system.append({"type": "text", "text":
+                "The current user question is in ENGLISH. Answer entirely in "
+                "English, including map/timeline/network titles and labels "
+                "(verbatim quotes from the sources stay in their original language)."})
+        elif lang == "fr":
+            system.append({"type": "text", "text":
+                "La question de l'utilisateur est en FRANÇAIS. Réponds entièrement "
+                "en français, y compris les titres des cartes, chronologies et "
+                "réseaux (les citations des sources restent dans leur langue d'origine)."})
 
         response = None
         rounds_used = 0
         iterations = 0
+        # text blocks from every round — the model often writes substantive
+        # text before calling create_map etc.; only keeping the final round
+        # silently dropped it from the rendered answer
+        text_rounds: list[list] = []
         while True:
             iterations += 1
             # pause_turn continuations don't consume the budget; the iteration
@@ -468,6 +492,10 @@ class AgenticAnswerer:
                            "n": 1, "preview": [stdout[:120]]}
             # image files created in the sandbox become inline artifacts
             self._collect_code_files(response, artifacts)
+
+            round_text = [b for b in response.content if getattr(b, "type", "") == "text"]
+            if any((b.text or "").strip() for b in round_text):
+                text_rounds.append(round_text)
 
             if response.stop_reason == "pause_turn":
                 messages.append({"role": "assistant", "content": response.content})
@@ -523,21 +551,22 @@ class AgenticAnswerer:
                 })
             user_content = list(tool_results)
             if meta_notes:
+                # language-neutral label: German prose here biased the model
+                # toward answering German regardless of the question's language
                 user_content.append({
                     "type": "text",
-                    "text": "Metadaten zu den Werkzeugergebnissen (u. a. chunk_ids "
-                            "für get_context):\n" + "\n".join(meta_notes),
+                    "text": "[tool_metadata]\n" + "\n".join(meta_notes),
                 })
             messages.append({"role": "user", "content": user_content})
             self._advance_cache_marker(messages)
 
-        answer_text = "".join(
-            b.text for b in response.content if b.type == "text"
-        ).strip() if response else ""
+        answer_text = "\n\n".join(
+            "".join(b.text for b in blocks).strip() for blocks in text_rounds
+        ).strip()
 
         # Span-level citations from the API (search_result blocks); the legacy
         # [Quelle N] regex stays as fallback for models that still write markers.
-        answer_blocks, cited = self._collect_api_citations(response, sources, source_meta)
+        answer_blocks, cited = self._collect_api_citations(text_rounds, sources, source_meta)
         if not cited:
             cited = self._extract_citations(answer_text, source_meta)
             answer_blocks = []
@@ -781,23 +810,28 @@ class AgenticAnswerer:
         block = self._sr_block(chunk, chunk.text_regularized[:text_chars])
         return meta, block
 
-    def _collect_api_citations(self, response, sources: dict,
+    def _collect_api_citations(self, text_rounds: list, sources: dict,
                                source_meta: dict) -> tuple[list, list]:
         """
-        Extract span-level API citations from the final message.
+        Extract span-level API citations from the text blocks of all rounds.
         Returns (answer_blocks, cited_sources): answer_blocks mirror the text
-        blocks with their citations (display index, cited span, deep link);
-        cited_sources are renumbered in reading order.
+        blocks with their citations (display index, cited span, deep link),
+        with paragraph separators between rounds; cited_sources are renumbered
+        in reading order.
         """
-        if response is None:
-            return [], []
         nr_by_chunk = dict(sources)
         display: dict[str, int] = {}
         cited: list[dict] = []
         answer_blocks: list[dict] = []
         any_citation = False
-        for block in response.content:
-            if getattr(block, "type", "") != "text":
+        flat: list = []
+        for i, blocks in enumerate(text_rounds):
+            if i:
+                flat.append(None)  # round boundary -> paragraph break
+            flat.extend(blocks)
+        for block in flat:
+            if block is None:
+                answer_blocks.append({"text": "\n\n", "citations": []})
                 continue
             entry = {"text": block.text, "citations": []}
             for cit in (getattr(block, "citations", None) or []):
@@ -832,6 +866,24 @@ class AgenticAnswerer:
         if not any_citation:
             return [], []
         return answer_blocks, cited
+
+    _EN_WORDS = re.compile(
+        r"\b(the|of|and|what|which|where|when|who|whom|create|show|make|draw|"
+        r"map|timeline|network|journey|did|were|about|with|please|how|why|his)\b", re.I)
+    _FR_WORDS = re.compile(
+        r"\b(le|la|les|une?|est|était|où|quand|quelle?s?|carte|montre|"
+        r"crée|voyage|avec|pourquoi|comment|chronologie|réseau)\b", re.I)
+
+    @classmethod
+    def _detect_lang(cls, query: str) -> str | None:
+        """Rough EN/FR detection; None means German (the default)."""
+        en = len(cls._EN_WORDS.findall(query))
+        fr = len(cls._FR_WORDS.findall(query))
+        if en >= 2 and en > fr:
+            return "en"
+        if fr >= 2 and fr > en:
+            return "fr"
+        return None
 
     @staticmethod
     def _advance_cache_marker(messages: list) -> None:
@@ -989,6 +1041,15 @@ class AgenticAnswerer:
                 ))
         return out, blocks
 
+    @staticmethod
+    def _upsert_artifact(artifacts: list, art: dict) -> None:
+        """Replace an earlier artifact of the same type+title (models retry
+        create_map after fixing unresolved places — don't show duplicates)."""
+        artifacts[:] = [a for a in artifacts
+                        if not (a.get("type") == art["type"]
+                                and a.get("title") == art["title"])]
+        artifacts.append(art)
+
     def _tool_create_map(self, tool_input: dict, artifacts: list) -> dict:
         stations_in = tool_input.get("stations") or []
         title = tool_input.get("title") or "Karte"
@@ -1018,7 +1079,7 @@ class AgenticAnswerer:
         if not resolved:
             return {"error": "Keine Station konnte zu Koordinaten aufgelöst werden. "
                              "Prüfe die Ortsnamen (Registerschreibweise) mit lookup_entity."}
-        artifacts.append({
+        self._upsert_artifact(artifacts, {
             "type": "map",
             "title": title,
             "connect_route": bool(tool_input.get("connect_route", True)),
@@ -1050,7 +1111,7 @@ class AgenticAnswerer:
         if not events:
             return {"error": "Keine gültigen Ereignisse (date + label erforderlich)."}
         events.sort(key=lambda e: e["date"])
-        artifacts.append({"type": "timeline", "title": title, "events": events})
+        self._upsert_artifact(artifacts, {"type": "timeline", "title": title, "events": events})
         return {
             "ok": True,
             "hinweis": f"Zeitleiste „{title}“ mit {len(events)} Ereignissen wird dem "
@@ -1192,8 +1253,8 @@ class AgenticAnswerer:
         edges.extend(cross[: 2 * max_nodes])
 
         title = tool_input.get("title") or f"Beziehungsnetz: {ent['name']}"
-        artifacts.append({"type": "network", "title": title,
-                          "nodes": nodes, "edges": edges})
+        self._upsert_artifact(artifacts, {"type": "network", "title": title,
+                                          "nodes": nodes, "edges": edges})
         return {
             "ok": True,
             "hinweis": f"Netzwerk „{title}“ mit {len(nodes)} Knoten und {len(edges)} "
