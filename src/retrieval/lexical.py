@@ -8,6 +8,7 @@ keyword-driven.
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 from collections import defaultdict
@@ -107,6 +108,10 @@ class LexicalRetriever:
         """
         Regex search over the regularized text of non-register chunks.
         For exact phrases, measurements, units — not for concept search.
+
+        Counts every match per chunk (not just the first) and ranks hits by
+        match density, so a common pattern surfaces the chunks where it
+        actually clusters instead of whatever was ingested first.
         """
         try:
             rx = re.compile(pattern, re.IGNORECASE)
@@ -114,6 +119,7 @@ class LexicalRetriever:
             return [{"error": f"Invalid regex: {e}"}]
 
         matches = []
+        scan_cap = limit * 4  # over-collect, then rank by density
         for cid, chunk in self.chunk_store.items():
             if chunk.doc_type.startswith("register_"):
                 continue
@@ -121,21 +127,26 @@ class LexicalRetriever:
                 continue
             if chunk.child_chunk_ids:  # skip parents/summaries: children carry the text
                 continue
-            m = rx.search(chunk.text_regularized)
-            if m:
-                start = max(0, m.start() - context_chars // 2)
-                end = min(len(chunk.text_regularized), m.end() + context_chars // 2)
-                matches.append({
-                    "chunk_id": cid,
-                    "citation_label": chunk.citation_label,
-                    "doc_type": chunk.doc_type,
-                    "date_iso": chunk.date_iso,
-                    "url": chunk.url,
-                    "match": chunk.text_regularized[start:end],
-                })
-                if len(matches) >= limit:
-                    break
-        return matches
+            text = chunk.text_regularized
+            hits = list(itertools.islice(rx.finditer(text), 50))
+            if not hits:
+                continue
+            m = hits[0]
+            start = max(0, m.start() - context_chars // 2)
+            end = min(len(text), m.end() + context_chars // 2)
+            matches.append({
+                "chunk_id": cid,
+                "citation_label": chunk.citation_label,
+                "doc_type": chunk.doc_type,
+                "date_iso": chunk.date_iso,
+                "url": chunk.url,
+                "match": text[start:end],
+                "match_count": len(hits),
+            })
+            if len(matches) >= scan_cap:
+                break
+        matches.sort(key=lambda m: m["match_count"], reverse=True)
+        return matches[:limit]
 
     def whereabouts(self, date_from: str, date_to: str | None = None, limit: int = 20) -> list[dict]:
         """
@@ -214,15 +225,22 @@ class LexicalRetriever:
         }
 
     def query_measurements(
-        self, unit: str | None = None, context_contains: str | None = None, limit: int = 25
+        self, unit: str | None = None, context_contains: str | None = None,
+        min_value: float | None = None, max_value: float | None = None,
+        limit: int = 25,
     ) -> list[dict]:
-        """Structured search over parsed <measure> annotations."""
+        """Structured search over parsed <measure> annotations. Value bounds
+        apply to the original (historical) unit's value."""
         needle = (context_contains or "").lower()
         unit_l = (unit or "").lower()
         out = []
         for row in self.measurement_index:
             if unit_l and unit_l not in row["unit"].lower() \
                     and unit_l != (row["unit_metric"] or "").lower():
+                continue
+            if min_value is not None and row["value"] < min_value:
+                continue
+            if max_value is not None and row["value"] > max_value:
                 continue
             if needle:
                 chunk = self.chunk_store[row["chunk_id"]]
@@ -234,11 +252,19 @@ class LexicalRetriever:
                 break
         return out
 
-    def get_context(self, chunk_id: str) -> dict:
-        """Neighboring chunks and parent document context for one chunk."""
+    def get_context(self, chunk_id: str, radius: int = 1) -> dict:
+        """
+        Neighboring chunks and parent document context for one chunk.
+
+        radius (1-3) controls how many siblings each side are returned, so
+        the model can widen the reading window around a hit — and `position`
+        ("i/N") lets it walk a document chunk by chunk without pulling the
+        whole thing via get_document.
+        """
         chunk = self.chunk_store.get(chunk_id)
         if chunk is None:
             return {"error": f"Unknown chunk_id: {chunk_id}"}
+        radius = max(1, min(int(radius or 1), 3))
 
         out = {
             "chunk_id": chunk_id,
@@ -258,14 +284,27 @@ class LexicalRetriever:
         siblings = self.doc_map.get(chunk.doc_id, [])
         if chunk_id in siblings:
             idx = siblings.index(chunk_id)
-            for offset, key in ((-1, "previous_chunk"), (1, "next_chunk")):
-                j = idx + offset
-                if 0 <= j < len(siblings):
-                    neighbor = self.chunk_store[siblings[j]]
-                    if not neighbor.doc_type.startswith("register_"):
-                        out[key] = {
-                            "chunk_id": neighbor.chunk_id,
-                            "citation_label": neighbor.citation_label,
-                            "text": neighbor.text_regularized[:600],
-                        }
+            out["position"] = f"{idx + 1}/{len(siblings)}"
+
+            def neighbors(step: int) -> list[dict]:
+                found = []
+                j = idx + step
+                while 0 <= j < len(siblings) and len(found) < radius:
+                    n = self.chunk_store[siblings[j]]
+                    if not n.doc_type.startswith("register_"):
+                        found.append({
+                            "chunk_id": n.chunk_id,
+                            "citation_label": n.citation_label,
+                            "date": n.date_iso,
+                            "text": n.text_regularized[:700],
+                        })
+                    j += step
+                return found
+
+            prev = neighbors(-1)
+            nxt = neighbors(+1)
+            if prev:
+                out["previous_chunks"] = prev[::-1]  # document order
+            if nxt:
+                out["next_chunks"] = nxt
         return out

@@ -211,6 +211,15 @@ TOOLS = [
             "properties": {
                 "humboldt_id": {"type": "string", "description": "ID aus lookup_entity, z. B. 'H0002222'"},
                 "limit": {"type": "integer", "description": "Max. Passagen (Standard 6)"},
+                "doc_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["diary", "letter", "document", "chronology",
+                                 "research_article"],
+                    },
+                    "description": "Optional: nur diese Dokumenttypen (Standard: gemischt über alle Typen)",
+                },
             },
             "required": ["humboldt_id"],
         },
@@ -245,7 +254,8 @@ TOOLS = [
         "name": "grep",
         "description": (
             "Regex-Suche (case-insensitive) über den regularisierten Text — für exakte "
-            "Wortformen, Messwerte, Einheiten (z. B. 'toises', '3[0-9]{3}'). Kein Ranking."
+            "Wortformen, Messwerte, Einheiten (z. B. 'toises', '3[0-9]{3}'). "
+            "Treffer sind nach Trefferdichte pro Passage sortiert."
         ),
         "input_schema": {
             "type": "object",
@@ -262,11 +272,16 @@ TOOLS = [
     },
     {
         "name": "get_context",
-        "description": "Lädt Umfeld einer Fundstelle: vollständiger Text, Nachbarpassagen, editorische Anmerkungen.",
+        "description": (
+            "Lädt Umfeld einer Fundstelle: vollständiger Text, Nachbarpassagen "
+            "(radius steuert die Fensterbreite), Position im Dokument, "
+            "editorische Anmerkungen."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "chunk_id": {"type": "string", "description": "chunk_id aus einem früheren Ergebnis"},
+                "radius": {"type": "integer", "description": "Nachbarpassagen je Richtung, 1-3 (Standard 1)"},
             },
             "required": ["chunk_id"],
         },
@@ -394,6 +409,8 @@ TOOLS = [
             "properties": {
                 "unit": {"type": "string", "description": "Optional: Einheit filtern (z. B. 'toise', 'meter')"},
                 "context_contains": {"type": "string", "description": "Optional: Stichwort im Kontext/Text (z. B. 'Chimborazo')"},
+                "min_value": {"type": "number", "description": "Optional: Mindestwert (in der Original-Einheit)"},
+                "max_value": {"type": "number", "description": "Optional: Höchstwert (in der Original-Einheit)"},
                 "limit": {"type": "integer", "description": "Max. Zeilen (Standard 25)"},
             },
         },
@@ -1143,17 +1160,50 @@ class AgenticAnswerer:
     def _tool_chunks_for_entity(self, tool_input: dict, sources: dict, source_meta: dict):
         hid = tool_input.get("humboldt_id", "")
         limit = int(tool_input.get("limit") or 6)
+        doc_types = tool_input.get("doc_types") or None
         chunk_ids = self.entity_index.chunks_for(hid)
         if not chunk_ids:
             return {"error": f"Keine annotierten Textstellen für {hid}."}
+
+        # The raw index is in corpus-ingestion order (travel journals first),
+        # so the first N used to be journals-only for busy entities. Rank by
+        # substance within each doc_type, then round-robin across types so
+        # letters/chronology/research articles surface too.
+        by_type: dict[str, list] = defaultdict(list)
+        total = 0
+        for cid in chunk_ids:
+            chunk = self.retriever.chunk_store.get(cid)
+            if chunk is None:
+                continue
+            if doc_types and chunk.doc_type not in doc_types:
+                continue
+            total += 1
+            by_type[chunk.doc_type].append((len(chunk.text_regularized), cid))
+        if not by_type:
+            return {"error": f"Keine annotierten Textstellen für {hid}"
+                             + (f" in {doc_types}." if doc_types else ".")}
+        for lst in by_type.values():
+            lst.sort(reverse=True)
+        picked: list[str] = []
+        pools = sorted(by_type.values(), key=len, reverse=True)
+        i = 0
+        while len(picked) < limit and any(pools):
+            pool = pools[i % len(pools)]
+            if pool:
+                picked.append(pool.pop(0)[1])
+            i += 1
+            if i > limit * len(pools) + len(pools):
+                break
+
         metas, blocks = [], []
-        for cid in chunk_ids[:limit]:
+        for cid in picked:
             meta, block = self._chunk_payload(cid, sources, source_meta)
             if meta:
                 metas.append(meta)
                 blocks.append(block)
-        if len(chunk_ids) > limit:
-            metas.append({"hinweis": f"{len(chunk_ids) - limit} weitere Textstellen vorhanden."})
+        if total > len(picked):
+            metas.append({"hinweis": f"{total - len(picked)} weitere Textstellen "
+                                     "vorhanden (limit/doc_types anpassen)."})
         return metas, blocks
 
     def _tool_search(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
@@ -1196,6 +1246,7 @@ class AgenticAnswerer:
                 "chunk_id": m["chunk_id"],
                 "doc_type": m["doc_type"],
                 "date": m["date_iso"],
+                "treffer": m.get("match_count", 1),
             })
             chunk = self.retriever.chunk_store.get(m["chunk_id"])
             if chunk is not None:
@@ -1203,7 +1254,10 @@ class AgenticAnswerer:
         return out, blocks
 
     def _tool_get_context(self, tool_input: dict, sources: dict, source_meta: dict):
-        ctx = self.retriever.get_context(tool_input.get("chunk_id", ""))
+        ctx = self.retriever.get_context(
+            tool_input.get("chunk_id", ""),
+            radius=int(tool_input.get("radius") or 1),
+        )
         if "error" in ctx:
             return ctx
         nr = self._register_source(ctx["chunk_id"], sources, source_meta)
@@ -1268,13 +1322,21 @@ class AgenticAnswerer:
                 continue
             hid = (st.get("humboldt_id") or "").strip()
             name = (st.get("name") or "").strip()
-            ent = None
+            ent, coords = None, None
             if hid and hid in self.entity_index.entities:
                 ent = self.entity_index.entities[hid]
+                coords = self.entity_index.coords_for(ent["id"])
             elif name:
-                hits = self.entity_index.lookup(name, entity_type="place", limit=1)
-                ent = hits[0] if hits else None
-            coords = self.entity_index.coords_for(ent["id"]) if ent else None
+                # walk the candidates until one has coordinates — taking only
+                # hits[0] dropped stations whenever the top-ranked homonym
+                # lacked coordinate enrichment
+                for cand in self.entity_index.lookup(name, entity_type="place", limit=5):
+                    c = self.entity_index.coords_for(cand["id"])
+                    if c:
+                        ent, coords = cand, c
+                        break
+                    if ent is None:
+                        ent = cand
             if coords:
                 resolved.append({
                     "label": st.get("label") or (ent["name"] if ent else name),
@@ -1327,7 +1389,14 @@ class AgenticAnswerer:
         ]
         if not events:
             return {"error": "Keine gültigen Ereignisse (date + label erforderlich)."}
-        events.sort(key=lambda e: e["date"])
+        # ISO-prefix-aware sort: mixed inputs like "1799-06-05" and "Sommer
+        # 1799" would interleave wrongly under a plain string sort
+        def sort_key(e):
+            m = re.search(r"(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?", e["date"])
+            if not m:
+                return (9999, 12, 31)
+            return (int(m.group(1)), int(m.group(2) or 6), int(m.group(3) or 15))
+        events.sort(key=sort_key)
         self._upsert_artifact(artifacts, {"type": "timeline", "title": title, "events": events})
         return {
             "ok": True,
@@ -1363,9 +1432,17 @@ class AgenticAnswerer:
         return doc, blocks
 
     def _tool_query_measurements(self, tool_input: dict, sources: dict, source_meta: dict) -> list | dict:
+        def _num(key):
+            v = tool_input.get(key)
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
         rows = self.retriever.query_measurements(
             unit=tool_input.get("unit"),
             context_contains=tool_input.get("context_contains"),
+            min_value=_num("min_value"),
+            max_value=_num("max_value"),
             limit=int(tool_input.get("limit") or 25),
         )
         if not rows:
