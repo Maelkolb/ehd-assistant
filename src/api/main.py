@@ -78,15 +78,24 @@ def _validated_history(history: list | None) -> list[dict]:
     return out
 
 
+EXPENSIVE_MODEL = "claude-opus-4-8"
+EXPENSIVE_MODEL_FALLBACK = "claude-sonnet-5"
+
+
 class RateLimiter:
-    """Per-IP sliding hour window + global daily request budget (in-memory,
-    per instance — pair with --max-instances on Cloud Run)."""
+    """Per-IP sliding hour window + global daily request budget, plus a
+    stricter per-IP sub-limit on the expensive model (in-memory, per
+    instance — the service is pinned to --max-instances=1 so this is a
+    single source of truth; sharding across instances would silently
+    multiply every limit below)."""
 
     def __init__(self):
         import collections
-        self.per_hour = int(os.environ.get("RATE_LIMIT_PER_HOUR", "30"))
+        self.per_hour = int(os.environ.get("RATE_LIMIT_PER_HOUR", "10"))
+        self.opus_per_hour = int(os.environ.get("RATE_LIMIT_OPUS_PER_HOUR", "2"))
         self.daily_budget = int(os.environ.get("DAILY_REQUEST_BUDGET", "500"))
         self.ip_hits: dict[str, "collections.deque"] = {}
+        self.opus_hits: dict[str, "collections.deque"] = {}
         self._deque = collections.deque
         self.day = ""
         self.day_count = 0
@@ -113,14 +122,37 @@ class RateLimiter:
             self.ip_hits = {k: v for k, v in self.ip_hits.items() if v and v[-1] > now - 3600}
         return None
 
+    def resolve_model(self, ip: str, requested_model: str | None) -> str | None:
+        """Downgrade to the fallback model once an IP exhausts its hourly
+        Opus sub-budget — a soft cost cap, not a hard rejection: the base
+        per-IP/day limit from check() already gated whether this IP may make
+        a request at all."""
+        if requested_model != EXPENSIVE_MODEL:
+            return requested_model
+        import time as _t
+        now = _t.time()
+        dq = self.opus_hits.setdefault(ip, self._deque())
+        while dq and dq[0] < now - 3600:
+            dq.popleft()
+        if len(dq) >= self.opus_per_hour:
+            return EXPENSIVE_MODEL_FALLBACK
+        dq.append(now)
+        if len(self.opus_hits) > 10000:  # bounded memory
+            self.opus_hits = {k: v for k, v in self.opus_hits.items() if v and v[-1] > now - 3600}
+        return requested_model
+
 
 rate_limiter = RateLimiter()
 
 
 def _client_ip(request: Request) -> str:
+    """Cloud Run's GFE *appends* the real connecting IP to any X-Forwarded-For
+    the client already sent, so the trustworthy value is the LAST entry —
+    the first is client-controlled and trivially spoofable, which would let
+    anyone bypass per-IP rate limiting by sending a fake header."""
     fwd = request.headers.get("x-forwarded-for", "")
     if fwd:
-        return fwd.split(",")[0].strip()
+        return fwd.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 
@@ -258,7 +290,8 @@ app.add_middleware(
 # =============================================================================
 
 class ChatRequest(BaseModel):
-    query: str = Field(..., description="User question about Alexander von Humboldt")
+    query: str = Field(..., min_length=1, max_length=2000,
+                       description="User question about Alexander von Humboldt")
     model: str | None = Field(default=None, description="Claude model (must be allowlisted)")
     history: list[dict] = Field(default=[], description="Prior turns [{role, content}]")
     top_k: int = Field(default=6, ge=1, le=20, description="Number of sources to retrieve")
@@ -313,14 +346,15 @@ async def chat(request: ChatRequest, http_request: Request):
     if retriever is None or generator is None:
         raise HTTPException(500, "System not initialized")
 
-    refusal = rate_limiter.check(_client_ip(http_request))
+    ip = _client_ip(http_request)
+    refusal = rate_limiter.check(ip)
     if refusal:
         raise HTTPException(429, refusal)
 
     if agent is not None:
         result = agent.generate(
             request.query,
-            model=_validated_model(request.model),
+            model=rate_limiter.resolve_model(ip, _validated_model(request.model)),
             history=_validated_history(request.history),
         )
         return ChatResponse(
@@ -427,9 +461,11 @@ async def chat_stream(request: ChatRequest, http_request: Request):
     if agent is None:
         raise HTTPException(400, "Agentic mode not enabled (RETRIEVAL_MODE!=agentic or no Claude key)")
 
-    refusal = rate_limiter.check(_client_ip(http_request))
+    ip = _client_ip(http_request)
+    refusal = rate_limiter.check(ip)
     if refusal:
         raise HTTPException(429, refusal)
+    resolved_model = rate_limiter.resolve_model(ip, _validated_model(request.model))
 
     import json as _json
     from fastapi.responses import StreamingResponse
@@ -438,7 +474,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
         try:
             for event in agent.iter_events(
                 request.query,
-                model=_validated_model(request.model),
+                model=resolved_model,
                 history=_validated_history(request.history),
             ):
                 yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"

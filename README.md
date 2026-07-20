@@ -58,6 +58,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 | `LLM_MODEL` | `claude-haiku-4-5` | Claude model ID (widget can select Sonnet/Opus) |
 | `RETRIEVAL_MODE` | `agentic` | `oneshot` = legacy pipeline |
 | `EFFORT` | unset (= `high`); deploys set `medium` | `low`/`medium`/`high`/`xhigh`/`max` — thinking/output budget on Sonnet/Opus (ignored on Haiku). `medium` measured at −22% cost with quality parity (`scripts/eval_cost.py` A/B, 2026-07). |
+| `RATE_LIMIT_PER_HOUR` | `10` | Requests per IP per hour, any model. Per Cloud Run instance — deploy at `--max-instances=1` or this is effectively multiplied by the instance count. |
+| `RATE_LIMIT_OPUS_PER_HOUR` | `2` | Opus-specific per-IP sub-limit; beyond it, Opus requests transparently fall back to Sonnet (not rejected). |
+| `DAILY_REQUEST_BUDGET` | `500` | Global daily cap shared by all visitors (no per-IP daily cap by design). |
 | `CITATION_REPAIR` | `1` | `0` disables the one-shot repair pass for uncited answers |
 | `CORS_ORIGINS` | `*` (logs a warning) | comma-separated allowlist for production |
 | `GEMINI_MODEL` | — | only if falling back to Vertex AI; env-only by design |
