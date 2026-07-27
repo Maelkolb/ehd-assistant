@@ -73,6 +73,7 @@ class TEIParser:
 
         elif doc_type == "letter":
             # === Letter: may have div, opener, closer, postscript ===
+            doc_meta.update(self._extract_corresp(root))
             chunks = self._parse_letter(body, doc_meta)
 
         elif has_divs:
@@ -161,6 +162,48 @@ class TEIParser:
             meta["date_not_after"] = creation_date.get("notAfter", "")
 
         return meta
+
+    _EDH_URL = "edition-humboldt.de"
+
+    def _extract_corresp(self, root) -> dict:
+        """Sender/recipient/origin/date from <correspDesc> (letters only)."""
+        out = {}
+        cd = root.find(".//tei:correspDesc", NS)
+        if cd is None:
+            return out
+
+        def _ref_id(el) -> str:
+            # @ref carries multiple space-separated URLs (edition, GND, GeoNames)
+            for u in (el.get("ref") or "").split():
+                if self._EDH_URL in u:
+                    return u.rstrip("/").rsplit("/", 1)[-1]
+            return ""
+
+        def _name(el) -> str:
+            return re.sub(r"\s+", " ", "".join(el.itertext())).strip()
+
+        for action in cd.findall("tei:correspAction", NS):
+            kind = action.get("type", "")
+            pers = action.findall("tei:persName", NS)
+            if pers:
+                pid, pname = _ref_id(pers[0]), _name(pers[0])
+                if len(pers) > 1:
+                    pname += f" (+{len(pers) - 1})"
+                if kind == "sent":
+                    out["sender_id"], out["sender_name"] = pid, pname
+                elif kind == "received":
+                    out["recipient_id"], out["recipient_name"] = pid, pname
+            if kind == "sent":
+                place = action.find("tei:placeName", NS)
+                if place is not None:
+                    out["origin_place_id"] = _ref_id(place)
+                    out["origin_place"] = _name(place)
+                date = action.find("tei:date", NS)
+                if date is not None:
+                    out["corresp_date"] = (date.get("when")
+                                           or date.get("notBefore")
+                                           or date.get("notAfter") or "")
+        return out
 
     def _parse_div(self, div, doc_meta: dict, entry_folio: str) -> list[HumboldtChunk]:
         """
@@ -307,11 +350,13 @@ class TEIParser:
                     folio_start = folio
                 folio_end = folio
 
-        # Extract dates
+        # Dates: correspDesc first — the body extractor picks up ANY <date>,
+        # including merely mentioned ones; the editorial correspDesc date is
+        # the letter's actual date.
         dates = self._extract_dates(body)
-        date_iso = dates[0] if dates else ""
-        if not date_iso:
-            date_iso = doc_meta.get("date_not_before", "")
+        date_iso = (doc_meta.get("corresp_date", "")
+                    or (dates[0] if dates else "")
+                    or doc_meta.get("date_not_before", ""))
         date_display = self._format_date(date_iso)
 
         ents = self._extract_all_entities(body)
@@ -331,6 +376,12 @@ class TEIParser:
             url=url,
             date_iso=date_iso,
             date_display=date_display,
+            sender_id=doc_meta.get("sender_id", ""),
+            sender_name=doc_meta.get("sender_name", ""),
+            recipient_id=doc_meta.get("recipient_id", ""),
+            recipient_name=doc_meta.get("recipient_name", ""),
+            origin_place_id=doc_meta.get("origin_place_id", ""),
+            origin_place=doc_meta.get("origin_place", ""),
             text_regularized=text,
             text_plain=self._normalize_for_search(text),
             **ents,

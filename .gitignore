@@ -6,3 +6,4 @@ data/processed/embeddings.npy
 *.tar.gz
 .venv/
 data/edh-source/
+data/processed/sandbox_files.json

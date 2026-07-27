@@ -264,6 +264,45 @@ class IngestionPipeline:
 
         self.bm25_index.save(str(processed / "bm25_text.json"))
         self.entity_index.save(processed / "entity_index.json")
+        self._write_derived_csvs(processed)
+
+    def _write_derived_csvs(self, processed) -> None:
+        """Compact tables for the code-execution sandbox (see agent SANDBOX_FILES)."""
+        import csv
+
+        letters_path = processed / "letters.csv"
+        seen: set[str] = set()
+        with open(letters_path, "w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f, lineterminator="\n")
+            w.writerow(["doc_id", "date_iso", "sender_id", "sender_name",
+                        "recipient_id", "recipient_name", "origin_place_id",
+                        "origin_place", "doc_title", "url"])
+            for c in self.chunk_store.values():
+                if c.doc_type != "letter" or c.doc_id in seen:
+                    continue
+                seen.add(c.doc_id)
+                w.writerow([c.doc_id, c.date_iso, c.sender_id, c.sender_name,
+                            c.recipient_id, c.recipient_name, c.origin_place_id,
+                            c.origin_place, c.doc_title, c.url])
+
+        mentions_path = processed / "entity_mentions_by_doctype.csv"
+        with open(mentions_path, "w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f, lineterminator="\n")
+            w.writerow(["humboldt_id", "name", "entity_type", "doc_type",
+                        "annotated_passages"])
+            for hid, cids in self.entity_index.chunk_index.items():
+                ent = self.entity_index.entities.get(hid)
+                if ent is None:
+                    continue
+                per_type: dict[str, int] = {}
+                for cid in cids:
+                    chunk = self.chunk_store.get(cid)
+                    if chunk is not None:
+                        per_type[chunk.doc_type] = per_type.get(chunk.doc_type, 0) + 1
+                for dt, n in sorted(per_type.items()):
+                    w.writerow([hid, ent["name"], ent["type"], dt, n])
+        logger.info(f"Wrote sandbox CSVs: {letters_path.name} ({len(seen)} letters), "
+                    f"{mentions_path.name}")
 
     def load(self) -> None:
         processed = self.data_dir / "processed"

@@ -106,6 +106,14 @@ class HumboldtChunk:
     date_not_after: str = ""
     date_display: str = ""       # Human-readable: "14. Juni 1797"
 
+    # === Correspondence (letters only, from TEI correspDesc) ===
+    sender_id: str = ""          # humboldt_id of sender
+    sender_name: str = ""
+    recipient_id: str = ""
+    recipient_name: str = ""
+    origin_place_id: str = ""
+    origin_place: str = ""
+
     # === Extracted entities ===
     persons: list[Entity] = field(default_factory=list)
     places: list[Entity] = field(default_factory=list)
@@ -188,7 +196,7 @@ class HumboldtChunk:
         return ", ".join(parts) if parts else self.doc_id
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "chunk_id": self.chunk_id,
             "doc_id": self.doc_id,
             "doc_title": self.doc_title,
@@ -213,6 +221,17 @@ class HumboldtChunk:
             "source_desc": self.source_desc,
             "parent_chunk_id": self.parent_chunk_id,
         }
+        # correspondence fields only on letters — keeps the other 24k chunks lean
+        if self.sender_id or self.recipient_id:
+            d.update(
+                sender_id=self.sender_id,
+                sender_name=self.sender_name,
+                recipient_id=self.recipient_id,
+                recipient_name=self.recipient_name,
+                origin_place_id=self.origin_place_id,
+                origin_place=self.origin_place,
+            )
+        return d
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
@@ -239,6 +258,12 @@ class HumboldtChunk:
             url=d.get("url", ""),
             date_iso=d.get("date_iso", ""),
             date_display=d.get("date_display", ""),
+            sender_id=d.get("sender_id", ""),
+            sender_name=d.get("sender_name", ""),
+            recipient_id=d.get("recipient_id", ""),
+            recipient_name=d.get("recipient_name", ""),
+            origin_place_id=d.get("origin_place_id", ""),
+            origin_place=d.get("origin_place", ""),
             text_regularized=d.get("text_regularized", ""),
             text_plain=d.get("text_plain", ""),
             persons=persons,

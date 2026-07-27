@@ -297,6 +297,8 @@ class ChatRequest(BaseModel):
     top_k: int = Field(default=6, ge=1, le=20, description="Number of sources to retrieve")
     use_vector: bool = Field(default=True, description="Use semantic search")
     use_bm25: bool = Field(default=True, description="Use keyword search")
+    wikipedia: bool = Field(default=False,
+                            description="Experimental: enable the Wikipedia context tool")
 
 class Source(BaseModel):
     index: int
@@ -307,6 +309,8 @@ class Source(BaseModel):
     doc_type: str = ""
     doc_title: str = ""
     text_preview: str = ""
+    wiki: dict | None = None  # Wikipedia panel content for external sources
+    stats: dict | None = None  # corpus_stats panel content (title/header/rows)
 
 class ChatResponse(BaseModel):
     answer: str
@@ -356,6 +360,7 @@ async def chat(request: ChatRequest, http_request: Request):
             request.query,
             model=rate_limiter.resolve_model(ip, _validated_model(request.model)),
             history=_validated_history(request.history),
+            wikipedia=request.wikipedia,
         )
         return ChatResponse(
             answer=result["answer"],
@@ -369,6 +374,8 @@ async def chat(request: ChatRequest, http_request: Request):
                     score=0.0,
                     doc_type=s.get("doc_type", ""),
                     doc_title=s.get("doc_title", ""),
+                    wiki=s.get("wiki"),
+                    stats=s.get("stats"),
                 )
                 for s in result["sources"]
             ],
@@ -476,6 +483,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 request.query,
                 model=resolved_model,
                 history=_validated_history(request.history),
+                wikipedia=request.wikipedia,
             ):
                 yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:

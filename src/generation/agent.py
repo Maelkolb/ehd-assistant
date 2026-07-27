@@ -101,6 +101,78 @@ def _code_execution_enabled(model: str) -> bool:
         return False
     return model.startswith(("claude-sonnet", "claude-opus"))
 
+
+# Experimental Wikipedia contextualizer: only offered when the user enables it
+# in the UI (per-request flag); disable globally with WIKIPEDIA=0. When off,
+# tools list and system prompt stay byte-identical, so the cached static
+# prefix is untouched.
+WIKIPEDIA_TOOL = {
+    "name": "wikipedia_context",
+    "description": (
+        "EXPERIMENTELL: Holt eine kurze Zusammenfassung aus der Wikipedia (de/en) als "
+        "externen Hintergrundkontext, optional mit einem Bild von Wikimedia Commons "
+        "(Porträt, historische Karte, Pflanzen-/Tierart) inkl. Lizenzangabe. Übergib "
+        "wenn möglich gnd_id oder geonames_id aus lookup_entity — das löst den Artikel "
+        "eindeutig auf; sonst term. Die Edition bleibt Primärquelle; Wikipedia ergänzt "
+        "sie gut um Rahmenwissen (Lebensdaten, moderne Einordnung, Artbestimmung, "
+        "Ortskontext)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "term": {"type": "string",
+                     "description": "Name oder Begriff, z. B. 'Aimé Bonpland' oder 'Chimborazo'"},
+            "gnd_id": {"type": "string",
+                       "description": "GND-ID aus lookup_entity (bevorzugt, eindeutig)"},
+            "geonames_id": {"type": "string",
+                            "description": "GeoNames-ID aus lookup_entity (für Orte)"},
+            "lang": {"type": "string", "enum": ["de", "en"],
+                     "description": "Wikipedia-Sprachausgabe — wähle die Sprache der Nutzerfrage"},
+            "include_image": {"type": "boolean",
+                              "description": "Bild anzeigen (nur bei echtem Mehrwert: "
+                                             "Porträt, Karte, Artenabbildung)"},
+        },
+        "required": ["term"],
+    },
+}
+
+WIKI_PROMPT = """
+
+## Wikipedia-Kontext (experimentell — vom Nutzer aktiviert)
+- `wikipedia_context`: kurze Wikipedia-Zusammenfassung (de/en) und optional ein \
+Commons-Bild als externen Hintergrund. Übergib bevorzugt gnd_id/geonames_id aus \
+lookup_entity; wähle lang passend zur Sprache der Nutzerfrage.
+- Nutze es gern ergänzend, wenn Rahmenwissen die Antwort bereichert — bei Personen, \
+Orten, Pflanzen und Tieren ist das oft der Fall (Lebensdaten, moderne Einordnung, \
+Artbestimmung, Ortskontext); typischerweise 1–2 Aufrufe pro Antwort. Die Edition \
+bleibt die Primärquelle; Wikipedia-Inhalte webst du knapp ein und belegst sie über \
+die Zitierfunktion — sie erscheinen dann automatisch als externe Wikipedia-Quelle.
+- include_image bei sichtbarem Mehrwert setzen (Porträt einer besprochenen Person, \
+historische Karte, Pflanzen-/Tierabbildung) — höchstens ein Bild pro Antwort.
+- Bildplatzierung: Markiere die inhaltlich passende Stelle im Antworttext mit einer \
+eigenen Zeile exakt im Format [BILD: Titel] (Titel = Artikeltitel aus dem \
+Toolergebnis; das Schlüsselwort BILD bleibt in jeder Antwortsprache unverändert). \
+Ohne Markierung erscheint das Bild am Antwortende."""
+
+
+def _wikipedia_enabled(requested: bool) -> bool:
+    return requested and os.environ.get("WIKIPEDIA", "1") != "0"
+
+
+# Corpus tables mounted into the code-execution container (SANDBOX_DATA=0
+# disables). Only appended to the prompt when the files actually attach.
+SANDBOX_DATA_PROMPT = """
+
+## Korpusdaten in der Sandbox
+In deiner Python-Sandbox liegen zwei CSV-Dateien mit Korpusdaten (UTF-8, Header in Zeile 1):
+- letters.csv — ein Brief pro Zeile: doc_id, date_iso, sender_id, sender_name, \
+recipient_id, recipient_name, origin_place_id, origin_place, doc_title, url.
+- entity_mentions_by_doctype.csv — humboldt_id, name, entity_type, doc_type, \
+annotated_passages (annotierte Passagen, KEINE Wortvorkommen).
+Nutze sie mit pandas für Auswertungen, die corpus_stats nicht abdeckt (Kreuztabellen, \
+eigene Diagramme mit matplotlib). Für Standardzählungen bleibt corpus_stats das \
+schnellere Werkzeug."""
+
 SYSTEM_PROMPT = """Du bist Alex, der Rechercheassistent der **edition humboldt digital** \
 (hg. v. Ottmar Ette, Berlin-Brandenburgische Akademie der Wissenschaften) — der digitalen \
 Edition der Reisetagebücher, Briefe, Dokumente und Chronologie Alexander von Humboldts.
@@ -127,14 +199,21 @@ Außerdem:
   aufgelöst. Nutze es IMMER, wenn nach einer Karte gefragt wird.
 - `create_timeline`: erzeugt eine visuelle Zeitleiste (Datum + Ereignis), die dem Nutzer \
   angezeigt wird — für Reiseverläufe, Ereignisfolgen, Lebensstationen.
-- `create_network`: erzeugt ein interaktives Beziehungsnetz um eine Registerentität \
-  (Person, Ort, Institution, Pflanze), das dem Nutzer angezeigt wird. Kanten = gemeinsame \
-  Erwähnung in denselben Textpassagen. Nutze es bei Fragen nach Beziehungen, Umfeld, \
-  Kontaktnetz oder "Wer/was taucht gemeinsam mit X auf?".
+- `create_network`: erzeugt ein interaktives Beziehungsnetz, das dem Nutzer angezeigt \
+  wird. Zwei Modi: (a) focus = Registerentität → Ko-Okkurrenz-Netz aus den editorischen \
+  Annotationen (Kanten = gemeinsame Textpassagen) — für "Wer/was taucht gemeinsam mit X \
+  auf?"; (b) nodes + edges selbst übergeben, wenn die Frage ein anderes Netz verlangt — \
+  z. B. ein Korrespondenznetz nach corpus_stats (Knoten = Korrespondent:innen mit \
+  weight = Briefzahl, Kanten von Humboldt zu jeder Person mit label wie "316 Briefe"). \
+  Nutze NIE den Ko-Okkurrenz-Modus, um Briefkontakte darzustellen.
 - `get_document`: den vollständigen Text eines Dokuments (Brief, Tagebuchabschnitt) laden — \
   für Zusammenfassungen ganzer Dokumente.
 - `query_measurements`: strukturierte Suche in den von den Herausgebern ausgezeichneten \
   Messwerten (Wert, historische Einheit, metrische Umrechnung).
+- `corpus_stats`: deterministische Zählungen und Ranglisten über den Korpus (Briefe je \
+  Korrespondenzpartner:in, Erwähnungen je Dokumenttyp/Jahr, Top-Entitäten, \
+  Korpusübersicht). Nutze es IMMER für "wie viele", "am meisten", "am häufigsten" — \
+  niemals schätzen. Entitätszahlen sind annotierte Passagen, keine Wortvorkommen.
 - `code_execution` (falls verfügbar): Python-Sandbox OHNE Internetzugang — für \
   Berechnungen, Umrechnungen, Statistik. Diagramme mit matplotlib sind möglich: \
   speichere sie als PNG (plt.savefig('diagramm.png')); erzeugte Bilder werden dem \
@@ -148,7 +227,10 @@ Empfohlene Strategie:
 5. Für Einordnung, Kontext und Forschungsstand: IMMER auch `search` mit \
    doc_types=["research_article"] — die Forschungsbeiträge der Edition liefern die \
    wissenschaftliche Interpretation, die Tagebücher nur den Befund.
-5. Historische Schreibweisen beachten: Die Texte sind in Deutsch, Französisch und Spanisch \
+6. Bei quantitativen Fragen (wie viele / wer am meisten / Rangliste): `corpus_stats`; \
+   für ein Korrespondenz- oder Ranglisten-Netz danach `create_network` mit eigenen \
+   nodes/edges aus den Ergebnissen.
+7. Historische Schreibweisen beachten: Die Texte sind in Deutsch, Französisch und Spanisch \
    des 18./19. Jahrhunderts verfasst. Probiere bei `search`/`grep` auch zeitgenössische \
    Varianten (z. B. "Crocodile"/"Cocodrilo" statt "Krokodil").
 Du hast maximal {max_rounds} Werkzeugrunden — recherchiere gezielt, nicht erschöpfend.
@@ -174,6 +256,11 @@ beende einen Zug niemals mit "Ich erstelle …".
   Karten, Zeitleisten und Netzwerken (übersetze sie; Zitate aus den Quellen bleiben \
   natürlich im Original).
 - Antworte konkret, mit Namen, Daten, Orten und Messwerten aus den Quellen.
+- Tabellarische Daten (Ranglisten, Vergleiche, Statistiken, Messreihen) formatiere \
+  als Markdown-Tabelle: Kopfzeile mit | Spalte | Spalte |, darunter eine \
+  |---|---|-Trennzeile, dann die Datenzeilen — sie wird dem Nutzer als formatierte \
+  Tabelle angezeigt. Halte Zellen kurz (keine Absätze in Zellen) und nutze Tabellen \
+  nur für echte Daten, nie für Fließtext.
 - Erfinde keine Quellenangaben und keine Inhalte."""
 
 
@@ -308,7 +395,8 @@ TOOLS = [
         "description": (
             "Erzeugt eine interaktive Karte, die dem Nutzer unter der Antwort angezeigt "
             "wird. Übergib die Stationen in Reihenfolge; Koordinaten werden aus dem "
-            "Ortsregister aufgelöst. Nicht auflösbare Orte werden zurückgemeldet."
+            "Ortsregister aufgelöst — oder gib lat/lon direkt an (z. B. für Orte "
+            "außerhalb des Registers). Nicht auflösbare Orte werden zurückgemeldet."
         ),
         "input_schema": {
             "type": "object",
@@ -323,8 +411,10 @@ TOOLS = [
                             "humboldt_id": {"type": "string", "description": "Optional: Register-ID, wenn bekannt (präziser)"},
                             "label": {"type": "string", "description": "Optional: Beschriftung (Standard: Ortsname)"},
                             "date": {"type": "string", "description": "Optional: Datum der Station"},
+                            "lat": {"type": "number", "description": "Optional: Breitengrad (WGS84) — umgeht die Registerauflösung"},
+                            "lon": {"type": "number", "description": "Optional: Längengrad (WGS84)"},
+                            "url": {"type": "string", "description": "Optional: Link für das Popup"},
                         },
-                        "required": ["name"],
                     },
                 },
                 "connect_route": {"type": "boolean", "description": "Stationen als Route verbinden (Standard true)"},
@@ -362,26 +452,60 @@ TOOLS = [
     {
         "name": "create_network",
         "description": (
-            "Erzeugt ein interaktives Beziehungsnetz (Graph) um eine Registerentität — "
-            "Person, Ort, Institution oder Pflanze —, das dem Nutzer unter der Antwort "
-            "angezeigt wird. Knoten sind mit-erwähnte Registerentitäten, Kanten gewichten "
-            "die Zahl gemeinsamer Textpassagen (editorische Annotationen). Die wichtigsten "
-            "Nachbarn werden auch dir zurückgemeldet, damit du sie besprechen kannst."
+            "Erzeugt ein interaktives Beziehungsnetz (Graph), das dem Nutzer angezeigt "
+            "wird. Zwei Modi: (a) focus = Registerentität → Ko-Okkurrenz-Netz aus den "
+            "editorischen Annotationen (Kanten = gemeinsame Textpassagen); "
+            "(b) nodes + edges selbst übergeben, wenn die Frage ein anderes Netz "
+            "verlangt — z. B. ein Korrespondenznetz aus corpus_stats-Ergebnissen "
+            "(Kantengewicht/-label = Briefzahl). Nutze NIE den Ko-Okkurrenz-Modus "
+            "für Briefzahlen."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "focus": {"type": "string", "description": "Name oder humboldt_id der zentralen Entität, z. B. 'Bonpland' oder 'H0002222'"},
+                "focus": {"type": "string", "description": "Ko-Okkurrenz-Modus: Name oder humboldt_id der zentralen Entität. Entfällt, wenn nodes/edges übergeben werden."},
                 "entity_types": {
                     "type": "array",
                     "items": {"type": "string", "enum": ["person", "place", "institution", "plant", "glossary"]},
-                    "description": "Optional: nur diese Typen als Nachbarknoten",
+                    "description": "Ko-Okkurrenz-Modus: nur diese Typen als Nachbarknoten",
                 },
-                "max_nodes": {"type": "integer", "description": "Max. Nachbarknoten (Standard 20, max. 40)"},
-                "min_shared": {"type": "integer", "description": "Mindestzahl gemeinsamer Passagen für eine Kante (Standard 2)"},
+                "max_nodes": {"type": "integer", "description": "Ko-Okkurrenz-Modus: max. Nachbarknoten (Standard 20, max. 40)"},
+                "min_shared": {"type": "integer", "description": "Ko-Okkurrenz-Modus: Mindestzahl gemeinsamer Passagen (Standard 2)"},
                 "title": {"type": "string", "description": "Optional: Titel des Netzes"},
+                "nodes": {
+                    "type": "array",
+                    "description": ("Eigener Modus: vollständige Knotenliste (max. 60) — für Netze, "
+                                    "die NICHT aus Ko-Okkurrenz entstehen sollen."),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "label": {"type": "string"},
+                            "type": {"type": "string", "description": "frei, z. B. 'person' oder 'Korrespondent:in' (steuert Farbe/Legende)"},
+                            "weight": {"type": "number", "description": "Knotengröße, z. B. Briefzahl"},
+                            "url": {"type": "string"},
+                            "color": {"type": "string", "description": "Optional: Hex-Farbe wie '#1d6fa5'"},
+                            "description": {"type": "string", "description": "Tooltip-Zusatzzeile"},
+                            "focus": {"type": "boolean", "description": "zentraler Knoten (genau einer)"},
+                        },
+                        "required": ["id", "label"],
+                    },
+                },
+                "edges": {
+                    "type": "array",
+                    "description": "Eigener Modus: Kanten zwischen node-ids; weight steuert Strichstärke, label wird angezeigt (z. B. '316 Briefe').",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "source": {"type": "string"},
+                            "target": {"type": "string"},
+                            "weight": {"type": "number"},
+                            "label": {"type": "string"},
+                        },
+                        "required": ["source", "target"],
+                    },
+                },
             },
-            "required": ["focus"],
         },
     },
     {
@@ -415,6 +539,49 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "corpus_stats",
+        "description": (
+            "Deterministische Aggregation über den Korpus — nutze dies IMMER für Zähl- "
+            "und Ranglistenfragen ('mit wem korrespondierte Humboldt am meisten?', "
+            "'wie viele Briefe pro Jahr?', 'wie oft wird X erwähnt?') statt zu schätzen. "
+            "WICHTIG: Entitätszahlen sind annotierte Passagen (editorische Annotationen), "
+            "keine Wortvorkommen."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "stat": {
+                    "type": "string",
+                    "enum": ["letters_by_correspondent", "mentions_by_doctype",
+                             "top_entities", "chunks_by_doctype",
+                             "letters_over_time", "mentions_over_time"],
+                    "description": (
+                        "letters_by_correspondent: Briefe je Korrespondenzpartner:in; "
+                        "mentions_by_doctype: annotierte Passagen einer Entität je Dokumenttyp; "
+                        "top_entities: meistannotierte Entitäten (optional je Dokumenttyp); "
+                        "chunks_by_doctype: Korpusübersicht; "
+                        "letters_over_time: Briefe pro Jahr; "
+                        "mentions_over_time: annotierte Passagen einer Entität pro Jahr"),
+                },
+                "entity": {"type": "string",
+                           "description": "Name oder humboldt_id (für mentions_*; optionaler Filter bei letters_*)"},
+                "direction": {"type": "string", "enum": ["sent", "received", "both"],
+                              "description": "letters_*: von Humboldt gesendet / an ihn gerichtet / beides (Standard both)"},
+                "doc_type": {"type": "string",
+                             "enum": ["diary", "letter", "document", "chronology",
+                                      "research_article", "editorial_note"],
+                             "description": "top_entities: nur dieser Dokumenttyp (Standard: alle)"},
+                "entity_type": {"type": "string",
+                                "enum": ["person", "place", "institution", "plant", "glossary"],
+                                "description": "top_entities: nur dieser Registertyp"},
+                "date_from": {"type": "string", "description": "Optional: ISO-Datum/-Präfix, z. B. '1830'"},
+                "date_to": {"type": "string", "description": "Optional: Ende des Bereichs"},
+                "top": {"type": "integer", "description": "Max. Zeilen (Standard 15, max. 50)"},
+            },
+            "required": ["stat"],
+        },
+    },
 ]
 
 
@@ -431,17 +598,19 @@ class AgenticAnswerer:
         self.retriever = retriever
         self.entity_index = entity_index
         self._chunk_entities: dict[str, set[str]] | None = None  # lazy inverse of entity_index.chunk_index
+        self._letters: list[dict] | None = None  # lazy: one row per letter doc
+        self._sandbox_ids: list[tuple[str, str]] | None = None  # (name, file_id)
 
     # =========================================================================
     # Public API
     # =========================================================================
 
     def generate(self, query: str, max_tokens: int = 8000, model: str | None = None,
-                 history: list[dict] | None = None) -> dict:
+                 history: list[dict] | None = None, wikipedia: bool = False) -> dict:
         """Run the loop to completion and return the final answer dict."""
         final = {}
         for event in self.iter_events(query, max_tokens=max_tokens, model=model,
-                                      history=history):
+                                      history=history, wikipedia=wikipedia):
             if event["type"] == "answer":
                 final = event["data"]
             elif event["type"] == "suggestions" and final:
@@ -449,7 +618,7 @@ class AgenticAnswerer:
         return final
 
     def iter_events(self, query: str, max_tokens: int = 8000, model: str | None = None,
-                    history: list[dict] | None = None):
+                    history: list[dict] | None = None, wikipedia: bool = False):
         """
         Run the agent loop, yielding progress events as they happen:
           {"type": "tool_call",    "round": n, "tool": ..., "input": {...}}
@@ -471,6 +640,13 @@ class AgenticAnswerer:
         tools = list(TOOLS)
         if _code_execution_enabled(active_model):
             tools.append(CODE_EXECUTION_TOOL)
+        use_wiki = _wikipedia_enabled(wikipedia)
+        if use_wiki:
+            tools.append(WIKIPEDIA_TOOL)
+        sandbox_files = []
+        if (CODE_EXECUTION_TOOL in tools
+                and os.environ.get("SANDBOX_DATA", "1") != "0"):
+            sandbox_files = self._sandbox_file_ids()
 
         # optional cost knob (A/B via eval harness before adopting a default);
         # Haiku 4.5 rejects the effort parameter
@@ -480,7 +656,15 @@ class AgenticAnswerer:
                 and active_model.startswith(("claude-sonnet", "claude-opus")):
             extra_kwargs["output_config"] = {"effort": effort}
 
-        messages = list(history or []) + [{"role": "user", "content": query}]
+        # corpus CSVs mount into the code-execution container via the final
+        # user message; the trailing text block keeps _advance_cache_marker happy
+        if sandbox_files:
+            user_content = ([{"type": "container_upload", "file_id": fid}
+                             for _, fid in sandbox_files]
+                            + [{"type": "text", "text": query}])
+        else:
+            user_content = query
+        messages = list(history or []) + [{"role": "user", "content": user_content}]
         # cache breakpoint on the system block also covers the (stable) tool
         # definitions, which render before it — saves the full static prefix
         # on every loop round and every follow-up request.
@@ -489,7 +673,9 @@ class AgenticAnswerer:
         # 0.1x reads for everyone else
         system = [{
             "type": "text",
-            "text": SYSTEM_PROMPT.format(max_rounds=MAX_TOOL_ROUNDS),
+            "text": SYSTEM_PROMPT.format(max_rounds=MAX_TOOL_ROUNDS)
+                    + (WIKI_PROMPT if use_wiki else "")
+                    + (SANDBOX_DATA_PROMPT if sandbox_files else ""),
             "cache_control": {"type": "ephemeral", "ttl": "1h"},
         }]
         # explicit language hint AFTER the breakpoint (cache stays warm):
@@ -511,6 +697,7 @@ class AgenticAnswerer:
         iterations = 0
         soft_forced = False
         continuations = 0
+        container_id = None  # reuse the code-exec container across rounds
         # text blocks from every round — the model often writes substantive
         # text before calling create_map etc.; only keeping the final round
         # silently dropped it from the rendered answer
@@ -532,6 +719,8 @@ class AgenticAnswerer:
                 tools=tools,
                 **extra_kwargs,
             )
+            if container_id and CODE_EXECUTION_TOOL in tools:
+                kwargs["container"] = container_id
             if hard_force:
                 kwargs["tool_choice"] = {"type": "none"}
                 messages.append({
@@ -568,15 +757,34 @@ class AgenticAnswerer:
             try:
                 response = yield from self._stream_round(kwargs)
             except Exception as e:
+                err = str(e)
                 # graceful degradation if the model rejects the server tool
-                if CODE_EXECUTION_TOOL in tools and "code_execution" in str(e):
+                if CODE_EXECUTION_TOOL in tools and "code_execution" in err:
                     logger.warning(f"code_execution rejected on {active_model}, retrying without: {e}")
                     tools = [t for t in tools if t is not CODE_EXECUTION_TOOL]
                     kwargs["tools"] = tools
+                    kwargs.pop("container", None)
+                    response = yield from self._stream_round(kwargs)
+                # stale sandbox file ids (server-side expiry): strip the
+                # uploads, force re-upload next request, retry without data
+                elif sandbox_files and ("file" in err.lower() or "container" in err.lower()):
+                    logger.warning(f"sandbox data rejected, retrying without: {e}")
+                    self._reset_sandbox_cache()
+                    sandbox_files = []
+                    for m in messages:
+                        if isinstance(m.get("content"), list):
+                            m["content"] = [b for b in m["content"]
+                                            if not (isinstance(b, dict)
+                                                    and b.get("type") == "container_upload")]
+                    system[0]["text"] = system[0]["text"].replace(SANDBOX_DATA_PROMPT, "")
+                    kwargs.pop("container", None)
                     response = yield from self._stream_round(kwargs)
                 else:
                     raise
             tally.add(getattr(response, "usage", None))
+            rc = getattr(response, "container", None)
+            if rc is not None and getattr(rc, "id", None):
+                container_id = rc.id
 
             # surface server-side tool activity (code execution) in the trace
             for block in response.content:
@@ -878,7 +1086,8 @@ class AgenticAnswerer:
     # array-valued tool arguments that models occasionally emit as
     # JSON-encoded strings (observed on Sonnet with large create_map /
     # create_timeline payloads — the string iterates to zero valid items)
-    _LIST_ARGS = frozenset({"stations", "events", "doc_types", "entity_types"})
+    _LIST_ARGS = frozenset({"stations", "events", "doc_types", "entity_types",
+                            "nodes", "edges"})
 
     @classmethod
     def _coerce_tool_input(cls, tool_input: dict) -> dict:
@@ -924,6 +1133,11 @@ class AgenticAnswerer:
                 out = self._tool_get_document(tool_input, sources, source_meta)
             elif name == "query_measurements":
                 out = self._tool_query_measurements(tool_input, sources, source_meta)
+            elif name == "corpus_stats":
+                out = self._tool_corpus_stats(tool_input, sources, source_meta, lang)
+            elif name == "wikipedia_context":
+                out = self._tool_wikipedia(tool_input, sources, source_meta,
+                                           artifacts, lang)
             else:
                 out = {"error": f"Unbekanntes Werkzeug: {name}"}
         except Exception as e:
@@ -1125,6 +1339,90 @@ class AgenticAnswerer:
         if last is not None:
             last["cache_control"] = {"type": "ephemeral"}
 
+    _MAX_WIKI_SOURCES = 3  # hard cap per answer, belt-and-braces vs. prompt guidance
+
+    def _register_wiki_source(self, info: dict, sources: dict,
+                              source_meta: dict) -> tuple[str, int]:
+        """Synthetic source for a Wikipedia article; dedupes on article URL.
+        The wiki-N id round-trips through #chunk= fragments, so the standard
+        citation collector resolves it like any chunk; the embedded `wiki`
+        object is what the frontend panel renders (no /chunk endpoint)."""
+        for nr, meta in source_meta.items():
+            if meta.get("doc_type") == "wikipedia" and meta.get("url") == info["url"]:
+                return meta["chunk_id"], nr
+        nr = len(sources) + 1
+        wid = f"wiki-{nr}"
+        sources[wid] = nr
+        label = f"Wikipedia ({info['lang']}): {info['title']}"
+        source_meta[nr] = {
+            "index": nr,
+            "chunk_id": wid,
+            "citation_label": label,
+            "doc_title": info["title"],
+            "url": info["url"],
+            "doc_type": "wikipedia",
+            "wiki": {"lang": info["lang"], "title": info["title"],
+                     "extract": info["extract"][:2000], "url": info["url"],
+                     "description": info.get("description", "")},
+        }
+        return wid, nr
+
+    def _tool_wikipedia(self, tool_input: dict, sources: dict, source_meta: dict,
+                        artifacts: list, lang: str | None = None):
+        from . import wikipedia as wiki
+        n_wiki = sum(1 for m in source_meta.values()
+                     if m.get("doc_type") == "wikipedia")
+        if n_wiki >= self._MAX_WIKI_SOURCES:
+            return {"error": "Wikipedia-Budget für diese Antwort erschöpft — "
+                             "antworte mit den vorhandenen Quellen."}
+        info = wiki.get_context(
+            term=tool_input.get("term", ""),
+            gnd_id=(tool_input.get("gnd_id") or "").strip() or None,
+            geonames_id=(tool_input.get("geonames_id") or "").strip() or None,
+            lang=tool_input.get("lang") or ("en" if lang == "en" else "de"),
+            include_image=bool(tool_input.get("include_image")),
+        )
+        if info is None:
+            return {"error": "Kein passender Wikipedia-Artikel gefunden "
+                             "(oder Wikipedia nicht erreichbar)."}
+        wid, _nr = self._register_wiki_source(info, sources, source_meta)
+        payload = {"wikipedia": info["title"], "lang": info["lang"],
+                   "url": info["url"]}
+        img = info.get("image")
+        if img and img.get("url"):
+            self._upsert_artifact(artifacts, {
+                "type": "image",
+                "title": info["title"],
+                "url": img["url"],
+                "source": "wikipedia",
+                "attribution": {
+                    "artist": img.get("artist", ""),
+                    "license": img.get("license", ""),
+                    "license_url": img.get("license_url", ""),
+                    "file_page": img.get("file_page", ""),
+                    "public_domain": bool(img.get("public_domain")),
+                },
+            })
+            payload["bild_angezeigt"] = True
+            marker = f"[BILD: {info['title']}]"
+            payload["hinweis"] = self._hint(
+                lang,
+                f"Bild wird mit Lizenzangabe angezeigt. Markiere die passende Stelle "
+                f"im Antworttext mit einer eigenen Zeile: {marker}",
+                f"Image is shown with license attribution. Mark the right spot in "
+                f"your answer with a line of its own: {marker} (keyword BILD stays as is).",
+                f"L'image est affichée avec sa licence. Marque l'endroit approprié "
+                f"dans ta réponse par une ligne : {marker} (garde le mot-clé BILD).")
+        block = {
+            "type": "search_result",
+            "source": f"{info['url']}#chunk={wid}",
+            "title": f"Wikipedia ({info['lang']}): {info['title']}",
+            "content": [{"type": "text",
+                         "text": info["extract"][:1500] or "(kein Auszug)"}],
+            "citations": {"enabled": True},
+        }
+        return payload, [block]
+
     def _tool_lookup_entity(self, tool_input: dict, sources: dict, source_meta: dict):
         hits = self.entity_index.lookup(
             tool_input.get("name", ""),
@@ -1140,6 +1438,7 @@ class AgenticAnswerer:
                 "type": h["type"],
                 "beschreibung": h["description"][:400],
                 "gnd": h["gnd"],
+                "geonames": h.get("geonames", ""),
                 "mention_count": h["mention_count"],
                 "url": h["url"],
             }
@@ -1322,6 +1621,17 @@ class AgenticAnswerer:
                 continue
             hid = (st.get("humboldt_id") or "").strip()
             name = (st.get("name") or "").strip()
+            # direct coordinates bypass the register (places outside it)
+            lat, lon = st.get("lat"), st.get("lon")
+            if (isinstance(lat, (int, float)) and isinstance(lon, (int, float))
+                    and -90 <= lat <= 90 and -180 <= lon <= 180):
+                resolved.append({
+                    "label": st.get("label") or name or f"{lat:.2f}, {lon:.2f}",
+                    "lat": float(lat), "lon": float(lon),
+                    "date": st.get("date", ""),
+                    "url": st.get("url", ""),
+                })
+                continue
             ent, coords = None, None
             if hid and hid in self.entity_index.entities:
                 ent = self.entity_index.entities[hid]
@@ -1482,9 +1792,390 @@ class AgenticAnswerer:
             self._chunk_entities = m
         return self._chunk_entities
 
+    # =========================================================================
+    # Sandbox data files (code-execution container)
+    # =========================================================================
+
+    SANDBOX_FILES = ("letters.csv", "entity_mentions_by_doctype.csv")
+
+    def _sandbox_file_ids(self) -> list[tuple[str, str]]:
+        """[(filename, file_id)] — uploads once per (path, mtime); cached in
+        memory and in a sidecar so restarts don't re-upload. Any failure
+        degrades to a no-data sandbox."""
+        if self._sandbox_ids is not None:
+            return self._sandbox_ids
+        from pathlib import Path
+        processed = Path(os.environ.get("DATA_DIR", "data")) / "processed"
+        sidecar = processed / "sandbox_files.json"
+        try:
+            cache = json.loads(sidecar.read_text())
+        except Exception:
+            cache = {}
+        out, dirty = [], False
+        for name in self.SANDBOX_FILES:
+            path = processed / name
+            if not path.exists():
+                continue
+            mtime = int(path.stat().st_mtime)
+            entry = cache.get(name)
+            if entry and entry.get("mtime") == mtime and entry.get("file_id"):
+                out.append((name, entry["file_id"]))
+                continue
+            try:
+                with open(path, "rb") as fh:
+                    up = self.client.beta.files.upload(file=(name, fh, "text/csv"))
+                cache[name] = {"mtime": mtime, "file_id": up.id}
+                out.append((name, up.id))
+                dirty = True
+                logger.info(f"Uploaded sandbox file {name} -> {up.id}")
+            except Exception as e:
+                logger.warning(f"Sandbox file upload failed for {name}: {e}")
+        if dirty:
+            try:
+                sidecar.write_text(json.dumps(cache))
+            except Exception:
+                pass
+        self._sandbox_ids = out
+        return out
+
+    def _reset_sandbox_cache(self) -> None:
+        """Stale file ids (server-side expiry) — force re-upload next request."""
+        self._sandbox_ids = None
+        from pathlib import Path
+        sidecar = Path(os.environ.get("DATA_DIR", "data")) / "processed" / "sandbox_files.json"
+        try:
+            sidecar.unlink()
+        except Exception:
+            pass
+
+    # =========================================================================
+    # Corpus statistics
+    # =========================================================================
+
+    HUMBOLDT_ID = "H0012069"
+
+    def _letters_table(self) -> list[dict]:
+        """One row per letter doc (chunks all carry the same correspDesc data)."""
+        if self._letters is None:
+            rows: dict[str, dict] = {}
+            for c in self.retriever.chunk_store.values():
+                if c.doc_type != "letter" or c.doc_id in rows:
+                    continue
+                rows[c.doc_id] = {
+                    "doc_id": c.doc_id, "date_iso": c.date_iso,
+                    "sender_id": c.sender_id, "sender_name": c.sender_name,
+                    "recipient_id": c.recipient_id, "recipient_name": c.recipient_name,
+                    "origin_place_id": c.origin_place_id, "origin_place": c.origin_place,
+                    "doc_title": c.doc_title, "url": c.url,
+                }
+            self._letters = list(rows.values())
+        return self._letters
+
+    def _entity_name(self, hid: str, fallback: str = "") -> str:
+        ent = self.entity_index.entities.get(hid)
+        return (ent or {}).get("name") or fallback or hid
+
+    def _resolve_stats_entity(self, ref: str):
+        """humboldt_id direct, else register lookup. Returns record or None."""
+        ent = self.entity_index.entities.get(ref)
+        if ent is None:
+            hits = self.entity_index.lookup(ref, limit=1)
+            ent = hits[0] if hits else None
+        return ent
+
+    def _register_stats_source(self, title: str, header: str, rows: list[str],
+                               sources: dict, source_meta: dict) -> tuple[str, int]:
+        """Synthetic citable source for an aggregation result (wiki-source pattern)."""
+        label = f"Korpusstatistik: {title}"
+        for nr, meta in source_meta.items():
+            if meta.get("doc_type") == "stats" and meta.get("citation_label") == label:
+                return meta["chunk_id"], nr
+        nr = len(sources) + 1
+        sid = f"stats-{nr}"
+        sources[sid] = nr
+        source_meta[nr] = {
+            "index": nr, "chunk_id": sid,
+            "citation_label": label, "doc_title": title,
+            "url": "", "doc_type": "stats",
+            "stats": {"title": title, "header": header, "rows": rows[:60]},
+        }
+        return sid, nr
+
+    @staticmethod
+    def _date_in_range(date_iso: str, date_from: str, date_to: str) -> bool:
+        if not date_iso:
+            return not date_from and not date_to
+        if date_from and date_iso < date_from:
+            return False
+        if date_to and date_iso[:len(date_to)] > date_to:
+            return False
+        return True
+
+    def _tool_corpus_stats(self, tool_input: dict, sources: dict,
+                           source_meta: dict, lang: str | None = None):
+        stat = tool_input.get("stat", "")
+        top = min(int(tool_input.get("top") or 15), 50)
+        date_from = (tool_input.get("date_from") or "").strip()
+        date_to = (tool_input.get("date_to") or "").strip()
+        direction = tool_input.get("direction") or "both"
+        entity_ref = (tool_input.get("entity") or "").strip()
+        doc_type = (tool_input.get("doc_type") or "").strip()
+        entity_type = (tool_input.get("entity_type") or "").strip()
+        passage_hint = self._hint(
+            lang,
+            "Zahlen = annotierte Passagen (editorische Annotationen), nicht Wortvorkommen; "
+            "bei langen Registereinträgen können die Zahlen leicht erhöht sein.",
+            "Counts are annotated passages (editorial annotations), not word occurrences; "
+            "long entries can inflate counts slightly.",
+            "Les chiffres sont des passages annotés (annotations éditoriales), pas des occurrences.")
+
+        if stat == "letters_by_correspondent":
+            letters = self._letters_table()
+            if date_from or date_to:
+                letters = [l for l in letters if l["date_iso"]
+                           and self._date_in_range(l["date_iso"], date_from, date_to)]
+            per: dict[str, dict] = {}
+            for l in letters:
+                sent_by_h = l["sender_id"] == self.HUMBOLDT_ID
+                recv_by_h = l["recipient_id"] == self.HUMBOLDT_ID
+                if direction == "sent" and not sent_by_h:
+                    continue
+                if direction == "received" and not recv_by_h:
+                    continue
+                for hid, raw in ((l["sender_id"], l["sender_name"]),
+                                 (l["recipient_id"], l["recipient_name"])):
+                    if not hid or hid == self.HUMBOLDT_ID:
+                        continue
+                    e = per.setdefault(hid, {"name": self._entity_name(hid, raw),
+                                             "n": 0, "von_h": 0, "an_h": 0, "dates": []})
+                    e["n"] += 1
+                    if sent_by_h:
+                        e["von_h"] += 1
+                    if recv_by_h:
+                        e["an_h"] += 1
+                    if l["date_iso"]:
+                        e["dates"].append(l["date_iso"][:4])
+            if entity_ref:
+                ent = self._resolve_stats_entity(entity_ref)
+                if ent:
+                    per = {h: e for h, e in per.items() if h == ent["id"]}
+            ranked = sorted(per.items(), key=lambda kv: -kv[1]["n"])[:top]
+            header = "name|humboldt_id|briefe|von_humboldt|an_humboldt|zeitraum"
+            rows = []
+            for hid, e in ranked:
+                zeit = f"{min(e['dates'])}–{max(e['dates'])}" if e["dates"] else "undatiert"
+                rows.append(f"{e['name']}|{hid}|{e['n']}|{e['von_h']}|{e['an_h']}|{zeit}")
+            title = "Briefe je Korrespondenzpartner:in"
+            sid, _ = self._register_stats_source(title, header, rows, sources, source_meta)
+            payload = {"stat": stat, "n_briefe_gesamt": len(letters), "zeilen": len(rows)}
+
+        elif stat == "mentions_by_doctype":
+            ent = self._resolve_stats_entity(entity_ref)
+            if ent is None:
+                return {"error": "Entität nicht gefunden — Name oder humboldt_id angeben "
+                                 "(ggf. zuerst lookup_entity)."}
+            cnt = Counter()
+            for cid in self.entity_index.chunks_for(ent["id"]):
+                chunk = self.retriever.chunk_store.get(cid)
+                if chunk is not None:
+                    cnt[chunk.doc_type] += 1
+            header = "doc_type|annotierte_passagen"
+            rows = [f"{dt}|{n}" for dt, n in cnt.most_common()]
+            title = f"Annotierte Passagen je Dokumenttyp: {ent['name']}"
+            sid, _ = self._register_stats_source(title, header, rows, sources, source_meta)
+            payload = {"stat": stat, "entitaet": ent["name"], "humboldt_id": ent["id"],
+                       "gesamt": sum(cnt.values()), "hinweis": passage_hint}
+
+        elif stat == "top_entities":
+            counts: list[tuple[int, str]] = []
+            store = self.retriever.chunk_store
+            for hid, cids in self.entity_index.chunk_index.items():
+                ent = self.entity_index.entities.get(hid)
+                if ent is None:
+                    continue
+                if entity_type and ent.get("type") != entity_type:
+                    continue
+                if doc_type:
+                    n = sum(1 for cid in cids
+                            if (c := store.get(cid)) is not None and c.doc_type == doc_type)
+                else:
+                    n = len(cids)
+                if n:
+                    counts.append((n, hid))
+            counts.sort(key=lambda t: -t[0])
+            header = "name|typ|humboldt_id|annotierte_passagen"
+            rows = []
+            for n, hid in counts[:top]:
+                ent = self.entity_index.entities[hid]
+                rows.append(f"{ent['name']}|{ent['type']}|{hid}|{n}")
+            scope = f" in {doc_type}" if doc_type else ""
+            title = f"Meistannotierte Entitäten{scope}"
+            sid, _ = self._register_stats_source(title, header, rows, sources, source_meta)
+            payload = {"stat": stat, "zeilen": len(rows), "hinweis": passage_hint}
+
+        elif stat == "chunks_by_doctype":
+            per_type: dict[str, set[str]] = defaultdict(set)
+            cnt = Counter()
+            for c in self.retriever.chunk_store.values():
+                cnt[c.doc_type] += 1
+                per_type[c.doc_type].add(c.doc_id)
+            header = "doc_type|passagen|dokumente"
+            rows = [f"{dt}|{n}|{len(per_type[dt])}" for dt, n in cnt.most_common()]
+            title = "Korpusübersicht nach Dokumenttyp"
+            sid, _ = self._register_stats_source(title, header, rows, sources, source_meta)
+            payload = {"stat": stat, "passagen_gesamt": sum(cnt.values())}
+
+        elif stat == "letters_over_time":
+            letters = self._letters_table()
+            ent = self._resolve_stats_entity(entity_ref) if entity_ref else None
+            years = Counter()
+            undated = 0
+            for l in letters:
+                if direction == "sent" and l["sender_id"] != self.HUMBOLDT_ID:
+                    continue
+                if direction == "received" and l["recipient_id"] != self.HUMBOLDT_ID:
+                    continue
+                if ent and ent["id"] not in (l["sender_id"], l["recipient_id"]):
+                    continue
+                if not l["date_iso"]:
+                    undated += 1
+                    continue
+                if not self._date_in_range(l["date_iso"], date_from, date_to):
+                    continue
+                years[l["date_iso"][:4]] += 1
+            header = "jahr|briefe"
+            rows = [f"{y}|{n}" for y, n in sorted(years.items())]
+            if undated:
+                rows.append(f"undatiert|{undated}")
+            title = "Briefe pro Jahr" + (f": {ent['name']}" if ent else "")
+            sid, _ = self._register_stats_source(title, header, rows, sources, source_meta)
+            payload = {"stat": stat, "zeilen": len(rows)}
+
+        elif stat == "mentions_over_time":
+            ent = self._resolve_stats_entity(entity_ref)
+            if ent is None:
+                return {"error": "Entität nicht gefunden — Name oder humboldt_id angeben "
+                                 "(ggf. zuerst lookup_entity)."}
+            years = Counter()
+            undated = 0
+            for cid in self.entity_index.chunks_for(ent["id"]):
+                chunk = self.retriever.chunk_store.get(cid)
+                if chunk is None:
+                    continue
+                if not chunk.date_iso:
+                    undated += 1
+                    continue
+                if not self._date_in_range(chunk.date_iso, date_from, date_to):
+                    continue
+                years[chunk.date_iso[:4]] += 1
+            header = "jahr|annotierte_passagen"
+            rows = [f"{y}|{n}" for y, n in sorted(years.items())]
+            if undated:
+                rows.append(f"undatiert|{undated}")
+            title = f"Annotierte Passagen pro Jahr: {ent['name']}"
+            sid, _ = self._register_stats_source(title, header, rows, sources, source_meta)
+            payload = {"stat": stat, "entitaet": ent["name"], "zeilen": len(rows),
+                       "hinweis": passage_hint}
+
+        else:
+            return {"error": f"Unbekannte Statistik: {stat}"}
+
+        meta = source_meta[sources[sid]]
+        block = {
+            "type": "search_result",
+            "source": f"https://edition-humboldt.de#chunk={sid}",
+            "title": meta["citation_label"],
+            "content": [{"type": "text",
+                         "text": meta["stats"]["header"] + "\n"
+                                 + ("\n".join(meta["stats"]["rows"]) or "(keine Treffer)")}],
+            "citations": {"enabled": True},
+        }
+        return payload, [block]
+
+    _HEX_COLOR_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
+
+    def _custom_network(self, tool_input: dict, artifacts: list,
+                        lang: str | None = None) -> dict:
+        """Model-supplied graph (correspondence networks etc.) — validate and pass through."""
+        raw_nodes = tool_input.get("nodes") or []
+        raw_edges = tool_input.get("edges") or []
+        dropped_nodes = max(0, len(raw_nodes) - 60)
+        nodes, seen, focus_seen = [], set(), False
+        for n in raw_nodes[:60]:
+            if not isinstance(n, dict):
+                continue
+            nid = str(n.get("id") or "").strip()
+            if not nid or nid in seen:
+                continue
+            seen.add(nid)
+            node = {"id": nid,
+                    "label": str(n.get("label") or nid)[:80],
+                    "type": str(n.get("type") or "custom")[:40]}
+            try:
+                node["weight"] = max(0.0, float(n.get("weight", 1)))
+            except (TypeError, ValueError):
+                node["weight"] = 1.0
+            url = str(n.get("url") or "")
+            if url.startswith("http"):
+                node["url"] = url
+            color = str(n.get("color") or "")
+            if self._HEX_COLOR_RE.match(color):
+                node["color"] = "#" + color.lstrip("#")
+            desc = str(n.get("description") or "").strip()
+            if desc:
+                node["description"] = desc[:200]
+            if n.get("focus") and not focus_seen:
+                node["focus"] = True
+                focus_seen = True
+            nodes.append(node)
+        if len(nodes) < 2:
+            return {"error": "Mindestens 2 gültige Knoten erforderlich (je mit id und label)."}
+        ids = {n["id"] for n in nodes}
+        edges, dropped_edges = [], 0
+        for e in raw_edges[:150]:
+            if not isinstance(e, dict):
+                continue
+            s, t = str(e.get("source") or ""), str(e.get("target") or "")
+            if s not in ids or t not in ids or s == t:
+                dropped_edges += 1
+                continue
+            edge = {"source": s, "target": t}
+            try:
+                edge["weight"] = max(0.0, float(e.get("weight", 1)))
+            except (TypeError, ValueError):
+                edge["weight"] = 1.0
+            label = str(e.get("label") or "").strip()
+            if label:
+                edge["label"] = label[:40]
+            edges.append(edge)
+        title = tool_input.get("title") or "Netzwerk"
+        self._upsert_artifact(artifacts, {
+            "type": "network", "title": title,
+            "nodes": nodes, "edges": edges, "custom": True,
+        })
+        notes = []
+        if dropped_nodes:
+            notes.append(f"{dropped_nodes} Knoten über Limit 60 verworfen")
+        if dropped_edges:
+            notes.append(f"{dropped_edges} Kanten mit unbekannten Endpunkten verworfen")
+        note = ("; " + "; ".join(notes)) if notes else ""
+        return {"ok": True, "knoten": len(nodes), "kanten": len(edges),
+                "hinweis": self._hint(
+                    lang,
+                    f"Eigenes Netzwerk „{title}“ ({len(nodes)} Knoten, {len(edges)} Kanten) "
+                    f"wird dem Nutzer angezeigt{note}. Erwähne es kurz.",
+                    f"Custom network “{title}” ({len(nodes)} nodes, {len(edges)} edges) "
+                    f"is displayed to the user{note}. Mention it briefly.",
+                    f"Le réseau personnalisé « {title} » ({len(nodes)} nœuds) est affiché.")}
+
     def _tool_create_network(self, tool_input: dict, artifacts: list,
                              lang: str | None = None) -> dict:
+        if tool_input.get("nodes"):
+            return self._custom_network(tool_input, artifacts, lang)
         focus_in = (tool_input.get("focus") or "").strip()
+        if not focus_in:
+            return {"error": "Entweder focus (Ko-Okkurrenz-Netz) oder nodes+edges "
+                             "(eigenes Netz) angeben."}
         types = set(tool_input.get("entity_types") or [])
         max_nodes = min(int(tool_input.get("max_nodes") or 20), 40)
         min_shared = max(1, int(tool_input.get("min_shared") or 2))
