@@ -109,12 +109,12 @@ def _code_execution_enabled(model: str) -> bool:
 WIKIPEDIA_TOOL = {
     "name": "wikipedia_context",
     "description": (
-        "EXPERIMENTELL: Holt eine kurze Zusammenfassung aus der Wikipedia (de/en) als "
-        "externen Hintergrundkontext, optional mit einem Bild von Wikimedia Commons "
+        "Holt eine kurze Zusammenfassung aus der Wikipedia (de/en) als "
+        "externen Kntext, oder ein Bild von Wikimedia Commons. "
         "(Porträt, historische Karte, Pflanzen-/Tierart) inkl. Lizenzangabe. Übergib "
         "wenn möglich gnd_id oder geonames_id aus lookup_entity — das löst den Artikel "
         "eindeutig auf; sonst term. Die Edition bleibt Primärquelle; Wikipedia ergänzt "
-        "sie gut um Rahmenwissen (Lebensdaten, moderne Einordnung, Artbestimmung, "
+        "sie gut um Rahmenwissen (Lebensdaten, Bilder) "
         "Ortskontext)."
     ),
     "input_schema": {
@@ -138,17 +138,16 @@ WIKIPEDIA_TOOL = {
 
 WIKI_PROMPT = """
 
-## Wikipedia-Kontext (experimentell — vom Nutzer aktiviert)
-- `wikipedia_context`: kurze Wikipedia-Zusammenfassung (de/en) und optional ein \
-Commons-Bild als externen Hintergrund. Übergib bevorzugt gnd_id/geonames_id aus \
+## Wikipedia-Kontext
+- `wikipedia_context`: kurze Wikipedia-Zusammenfassung (de/en) oder ein \
+Commons-Bild. Übergib bevorzugt gnd_id/geonames_id aus \
 lookup_entity; wähle lang passend zur Sprache der Nutzerfrage.
-- Nutze es gern ergänzend, wenn Rahmenwissen die Antwort bereichert — bei Personen, \
-Orten, Pflanzen und Tieren ist das oft der Fall (Lebensdaten, moderne Einordnung, \
-Artbestimmung, Ortskontext); typischerweise 1–2 Aufrufe pro Antwort. Die Edition \
+- Nutze es gern ergänzend, wenn Rahmenwissen oder ein Bild die Antwort bereichern — bei Personen, \
+Orten, Pflanzen und Tieren ist das oft der Fall (Lebensdaten, Bilder Ortskontext); typischerweise 1–4 Aufrufe pro Antwort. Die Edition \
 bleibt die Primärquelle; Wikipedia-Inhalte webst du knapp ein und belegst sie über \
 die Zitierfunktion — sie erscheinen dann automatisch als externe Wikipedia-Quelle.
 - include_image bei sichtbarem Mehrwert setzen (Porträt einer besprochenen Person, \
-historische Karte, Pflanzen-/Tierabbildung) — höchstens ein Bild pro Antwort.
+historische Karte, Pflanzen-/Tierabbildung)
 - Bildplatzierung: Markiere die inhaltlich passende Stelle im Antworttext mit einer \
 eigenen Zeile exakt im Format [BILD: Titel] (Titel = Artikeltitel aus dem \
 Toolergebnis; das Schlüsselwort BILD bleibt in jeder Antwortsprache unverändert). \
@@ -226,7 +225,7 @@ Empfohlene Strategie:
 4. Bei Fragen zu Messungen: `query_measurements`, ergänzend `grep`.
 5. Für Einordnung, Kontext und Forschungsstand: IMMER auch `search` mit \
    doc_types=["research_article"] — die Forschungsbeiträge der Edition liefern die \
-   wissenschaftliche Interpretation, die Tagebücher nur den Befund.
+   wissenschaftliche Interpretation.
 6. Bei quantitativen Fragen (wie viele / wer am meisten / Rangliste): `corpus_stats`; \
    für ein Korrespondenz- oder Ranglisten-Netz danach `create_network` mit eigenen \
    nodes/edges aus den Ergebnissen.
