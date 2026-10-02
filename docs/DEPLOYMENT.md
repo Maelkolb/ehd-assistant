@@ -82,7 +82,7 @@ text (Alex strips `<think>…</think>` if that happens).
 | `SANDBOX_MODE` | Where the code runs | Use for |
 |---|---|---|
 | `http` | the `sandbox` container of `docker-compose.yml` | public deployments |
-| `subprocess` | a guarded child process of the API | development, trusted users |
+| `subprocess` | a guarded child process of the API | development, single-container hosts |
 | `off` | nowhere; the `run_python` tool is not offered | when in doubt |
 
 The sandbox container has no route to the internet (internal Docker network),
@@ -91,6 +91,31 @@ no Linux capabilities, and limits on memory, CPU and process count. The corpus
 it can read is public data. If you deploy without Compose, keep these
 properties: the worker's in-process guard (see ARCHITECTURE.md) is not a
 sufficient boundary against a determined attacker on its own.
+
+## Google Cloud Run
+
+The image listens on `$PORT`, so it deploys as it is. From a checkout:
+
+```bash
+gcloud run deploy alex --source . --region europe-west1 \
+  --max-instances 1 --memory 2Gi --cpu 2 --timeout 900 --allow-unauthenticated \
+  --set-env-vars PROXY_HOPS=1,SANDBOX_MODE=subprocess \
+  --set-secrets ANTHROPIC_API_KEY=anthropic-api-key:latest
+```
+
+- `--source .` builds the Dockerfile with Cloud Build, which also fetches the
+  corpus and builds the store. Redeploying an existing service keeps its
+  environment variables and secrets; pass only what changes.
+- `--max-instances 1`: the rate limits live in the instance's memory.
+- `PROXY_HOPS=1`: Cloud Run appends the client address to `X-Forwarded-For`.
+- `--timeout 900`: an answer is one long streaming request.
+- Sandbox: Cloud Run has no internal-only sidecar network, so there
+  `subprocess` means the guarded worker runs inside the one container. Alex
+  marks the API process non-dumpable so that workers cannot read its
+  environment, and the worker has no credentials of its own, but its only
+  network barrier is the in-process guard. Give the service a dedicated
+  service account without roles (the default one can do far more than Alex
+  needs), or set `SANDBOX_MODE=off` if code execution is not worth that to you.
 
 ## Behind a reverse proxy
 

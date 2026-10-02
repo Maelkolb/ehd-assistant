@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -65,3 +67,32 @@ def test_sandbox_can_be_switched_off(store_path):
     assert not Sandbox("off", store_path).enabled
     assert not Sandbox("http", store_path, url="").enabled
     assert os.environ.get("PATH")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="/proc is a Linux matter")
+def test_worker_cannot_read_the_environment_of_a_shielded_parent(tmp_path):
+    """A parent that shielded itself keeps its secrets from same-user children."""
+    parent = (
+        "import os, subprocess, sys\n"
+        "from alex.sandbox.runner import shield_this_process\n"
+        "os.environ['SECRET_KEY'] = 'sk-live'\n"
+        "print('unshielded', subprocess.run([sys.executable, '-c', CHILD], capture_output=True,"
+        " text=True).stdout.strip())\n"
+        "assert shield_this_process()\n"
+        "print('shielded', subprocess.run([sys.executable, '-c', CHILD], capture_output=True,"
+        " text=True).stdout.strip())\n"
+    )
+    child = (
+        "import os\n"
+        "try:\n"
+        "    print('sk-live' in open(f'/proc/{os.getppid()}/environ').read())\n"
+        "except OSError as error:\n"
+        "    print(type(error).__name__)\n"
+    )
+    script = tmp_path / "parent.py"
+    script.write_text(f"CHILD = {child!r}\n{parent}", encoding="utf-8")
+    output = subprocess.run(
+        [sys.executable, str(script)], capture_output=True, text=True, check=True
+    ).stdout.split("\n")
+    assert output[0].startswith("unshielded")
+    assert output[1] == "shielded PermissionError"

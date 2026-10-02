@@ -19,6 +19,7 @@ from alex import __version__
 from alex.api.ratelimit import RateLimiter, Refusal
 from alex.corpus.store import DocumentStore, Passage, StoreError
 from alex.runtime import Runtime, create_runtime
+from alex.sandbox.runner import shield_this_process
 
 logger = logging.getLogger("alex.api")
 
@@ -181,6 +182,7 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         return response
 
     if runtime.sandbox.mode == "subprocess":
+        shield_this_process()
         # the first run builds matplotlib's font cache; do it before a user waits for it
         threading.Thread(target=runtime.sandbox.run, args=("print('ready')",), daemon=True).start()
 

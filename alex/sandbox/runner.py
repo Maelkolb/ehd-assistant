@@ -19,6 +19,18 @@ logger = logging.getLogger(__name__)
 WORKER = Path(__file__).with_name("worker.py")
 MAX_CODE_CHARS = 20_000
 PASSED_ENVIRONMENT = ("SYSTEMROOT", "WINDIR", "PATH", "LANG", "LC_ALL", "TZ")
+PR_SET_DUMPABLE = 4
+
+
+def shield_this_process() -> bool:
+    """Workers run under the same user as the process that starts them. On
+    Linux that would let a worker read its parent's environment (API keys) and
+    memory through /proc; marking the parent non-dumpable closes that."""
+    if sys.platform != "linux":
+        return False
+    import ctypes
+
+    return ctypes.CDLL(None, use_errno=True).prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) == 0
 
 
 @dataclass
