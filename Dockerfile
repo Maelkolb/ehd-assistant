@@ -10,7 +10,7 @@ COPY pyproject.toml README.md ./
 COPY alex/__init__.py alex/__init__.py
 RUN pip install .
 COPY alex/ alex/
-RUN pip install --no-deps .
+RUN pip install --no-deps --force-reinstall .
 
 # The document store is built from the edition's original TEI dump at image
 # build time. CORPUS_REF is a branch, tag or commit of the dump repository;
