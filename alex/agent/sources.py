@@ -180,6 +180,18 @@ class SourceRegistry:
             facts.append("Also: " + "; ".join(entity["alternative_names"][:6]))
         if entity.get("description"):
             facts.append(entity["description"][:900])
+        annotated = (
+            f"Annotated {entity['mention_count']} times in {entity['document_count']} "
+            "documents of the edition"
+        )
+        if not entity.get("in_register", 1):
+            annotated += " (known from annotations only; no register entry in this data release)"
+        facts.append(annotated)
+        if entity.get("lat") is not None:
+            facts.append(f"Coordinates {entity['lat']:.4f}, {entity['lon']:.4f}")
+        for authority in ("gnd", "geonames", "wikidata"):
+            if entity.get(authority):
+                facts.append(f"{authority} {entity[authority]}")
         heading = f"Register entry ({entity['kind']}): {entity['name']} [{entity['entity_id']}]"
         return source, CitableText(source.id, heading, entity.get("url", ""), ". ".join(facts)), new
 

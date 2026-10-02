@@ -194,11 +194,11 @@ class AnthropicConversation:
             return stream.get_final_message()
 
     def add_tool_outputs(self, outputs: list[ToolOutput], note: str = "") -> None:
-        """Citable sources travel as search_result blocks. A tool_result cannot
-        mix block types, so each tool's plain-text part follows in one text
-        block after the results."""
+        """Everything a tool returned stays inside its tool_result: sources as
+        search_result blocks, and the tool's hints as one more block marked as
+        not citable. Loose text after tool results reads to the model like
+        something the user sent."""
         content: list[dict] = []
-        remarks: list[str] = []
         for output in outputs:
             result: dict = {"type": "tool_result", "tool_use_id": output.call_id}
             if output.is_error:
@@ -206,14 +206,23 @@ class AnthropicConversation:
             if output.sources and not output.is_error:
                 result["content"] = [self.search_result(source) for source in output.sources]
                 if output.text:
-                    remarks.append(f"[{output.name}] {output.text}")
+                    result["content"].append(self.hint(output.text))
             else:
                 result["content"] = output.text or "(no output)"
             content.append(result)
-        trailing = "\n\n".join([*remarks, note] if note else remarks)
-        if trailing:
-            content.append({"type": "text", "text": trailing})
         self.messages.append({"role": "user", "content": content})
+        if note:
+            self.messages.append({"role": "system", "content": note})
+
+    @staticmethod
+    def hint(text: str) -> dict:
+        return {
+            "type": "search_result",
+            "source": "https://edition-humboldt.de",
+            "title": "Hints from the tool (not a source, do not cite)",
+            "content": [{"type": "text", "text": text}],
+            "citations": {"enabled": True},
+        }
 
     @staticmethod
     def search_result(source) -> dict:

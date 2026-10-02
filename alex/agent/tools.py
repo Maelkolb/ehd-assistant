@@ -60,10 +60,21 @@ class ToolContext:
     def compact(self) -> bool:
         return self.spec.compact
 
-    def cite(self, result: ToolResult, passage: Passage, max_notes: int = 8) -> None:
+    def cite(self, result: ToolResult, passage: Passage, max_notes: int = 8) -> CitableText:
         source, citable, new = self.registry.passage(passage, max_notes)
         result.sources.append(citable)
         if new:
+            result.new_sources.append(source)
+        return citable
+
+    def tabulate(
+        self, result: ToolResult, title: str, query: str, columns: list[str], rows: list[list]
+    ) -> None:
+        """Counts and listings a tool computed, as a citable table."""
+        text = table_text(columns, rows, 2_500 if self.compact else 6_000)
+        source, citable = self.registry.data(title, query, columns, rows, False, text)
+        result.sources.append(citable)
+        if source not in result.new_sources:
             result.new_sources.append(source)
 
     def show(self, result: ToolResult, artifact: dict) -> dict:
@@ -125,7 +136,6 @@ def tool_search(arguments: dict, context: ToolContext) -> ToolResult:
     result = ToolResult(count=len(passages), summary=str(len(passages)))
     for passage in passages:
         context.cite(result, passage, max_notes=3 if context.compact else 6)
-    result.text = f"{len(passages)} passages, best first."
     return result
 
 
@@ -141,21 +151,22 @@ def tool_grep(arguments: dict, context: ToolContext) -> ToolResult:
     if not found["total_matches"]:
         note = " (stopped at the time limit)" if found["timed_out"] else ""
         return ToolResult(text=f"No matches{note}.", summary="0")
-    result = ToolResult(count=found["total_matches"], summary=str(found["total_matches"]))
+    result = ToolResult(count=found["total_matches"])
+    german = context.language == "de"
+    context.tabulate(
+        result,
+        ("Treffer je Dokument: " if german else "Matches per document: ") + arguments["pattern"],
+        f"grep {arguments['pattern']}",
+        ["doc_id", "doc_type", "title", "matches"],
+        [
+            [entry["doc_id"], entry["doc_type"], entry["title"], entry["matches"]]
+            for entry in found["documents"]
+        ],
+    )
     for passage in found["passages"]:
         context.cite(result, passage, max_notes=0)
-    per_document = "; ".join(
-        f"{entry['doc_id']} ({entry['matches']}) {entry['title'][:60]}"
-        for entry in found["documents"][:12]
-    )
-    more = len(found["documents"]) - 12
-    result.text = (
-        f"{found['total_matches']} matches in {len(found['documents'])} documents"
-        + (" (search stopped at the time limit)" if found["timed_out"] else "")
-        + f"; {len(found['passages'])} shown. Matches per document: {per_document}"
-        + (f"; and {more} more documents" if more > 0 else "")
-        + "."
-    )
+    if found["timed_out"]:
+        result.text = "The search stopped at its time limit; the counts are incomplete."
     return result
 
 
@@ -189,24 +200,26 @@ def tool_read_document(arguments: dict, context: ToolContext) -> ToolResult:
         passage = store.read(doc_id, max(0, arguments.get("start") or 0), max_chars)
 
     result = ToolResult(count=passage.end - passage.start)
-    lines = [document_line(document)]
+    record = document_line(document)
     if document["editors"]:
-        lines.append(f"Edited by {document['editors']}.")
+        record += f" | edited by {document['editors']}"
+    hints = []
     if whole:
         introduction = store.introduction(doc_id)
         if introduction:
             context.cite(result, introduction)
-        if document["abstract"]:
-            lines.append(f"Abstract: {document['abstract'][:1200]}")
         if passage.truncated_after:
-            lines.append(outline(store, doc_id))
-    context.cite(result, passage, max_notes=10 if context.compact else 30)
+            hints.append(outline(store, doc_id))
+    citable = context.cite(result, passage, max_notes=10 if context.compact else 30)
+    citable.notes.insert(0, f"[Document record] {record}")
+    if whole and document["abstract"]:
+        citable.notes.insert(1, f"[Abstract] {document['abstract'][:1200]}")
     if passage.truncated_after:
-        lines.append(
+        hints.append(
             f"The text continues: read on with start={passage.end} "
             f"(document length {document['n_chars']})."
         )
-    result.text = "\n".join(lines)
+    result.text = "\n".join(hints)
     return result
 
 
@@ -240,31 +253,46 @@ def tool_list_documents(arguments: dict, context: ToolContext) -> ToolResult:
     )
     if not rows:
         return ToolResult(text="No documents match.", summary="0")
-    lines = [document_line(row) for row in rows]
+    result = ToolResult(count=total)
+    filters = ", ".join(
+        f"{name}={arguments[name]}"
+        for name in ("doc_type", "date_from", "date_to", "person", "title_contains")
+        if arguments.get(name)
+    )
+    context.tabulate(
+        result,
+        ("Dokumente" if context.language == "de" else "Documents")
+        + (f": {filters}" if filters else ""),
+        f"list_documents {filters} offset={arguments.get('offset') or 0}",
+        ["doc_id", "doc_type", "date", "title", "sender", "recipient", "from", "chars"],
+        [
+            [
+                row["doc_id"],
+                row["doc_type"],
+                row["date_from"]
+                if row["date_from"] == row["date_to"]
+                else f"{row['date_from']}/{row['date_to']}",
+                row["title"],
+                row["sender_name"],
+                row["recipient_name"],
+                row["origin_place"],
+                row["n_chars"],
+            ]
+            for row in rows
+        ],
+    )
     more = total - (arguments.get("offset") or 0) - len(rows)
-    header = f"{total} documents match" + (f"; {more} more with offset" if more > 0 else "") + "."
-    return ToolResult(text="\n".join([header, *lines]), count=total, summary=str(total))
+    if more > 0:
+        result.text = (
+            f"{total} documents match; {more} more with "
+            f"offset={(arguments.get('offset') or 0) + len(rows)}."
+        )
+    return result
 
 
 # ----------------------------------------------------------------------
 # Registers and annotations
 # ----------------------------------------------------------------------
-
-
-def entity_line(entity: dict) -> str:
-    parts = [entity["entity_id"], entity["kind"], entity["name"]]
-    life = "–".join(part for part in (entity.get("born"), entity.get("died")) if part)
-    if life:
-        parts.append(life)
-    parts.append(f"{entity['mention_count']} mentions in {entity['document_count']} documents")
-    if entity.get("lat") is not None:
-        parts.append(f"lat {entity['lat']:.3f}, lon {entity['lon']:.3f}")
-    for authority in ("gnd", "geonames"):
-        if entity.get(authority):
-            parts.append(f"{authority} {entity[authority]}")
-    if not entity.get("in_register", 1):
-        parts.append("known from annotations only, no register entry in this data release")
-    return " | ".join(parts)
 
 
 def resolve_entity(store: DocumentStore, reference: str, kind: str | None = None) -> dict | None:
@@ -289,7 +317,6 @@ def tool_lookup_entity(arguments: dict, context: ToolContext) -> ToolResult:
         result.sources.append(citable)
         if new:
             result.new_sources.append(source)
-    result.text = "\n".join(entity_line(entity) for entity in entities)
     return result
 
 
@@ -312,23 +339,41 @@ def tool_entity_mentions(arguments: dict, context: ToolContext) -> ToolResult:
         return ToolResult(
             text=f"{entity['name']} is not annotated in the selected texts.", summary="0"
         )
-    result = ToolResult(count=found["total_mentions"], summary=str(found["total_mentions"]))
+    result = ToolResult(count=found["total_mentions"])
+    context.tabulate(
+        result,
+        (
+            "Annotierte Erwähnungen je Dokument: "
+            if context.language == "de"
+            else "Annotated mentions per document: "
+        )
+        + entity["name"],
+        f"entity_mentions {entity['entity_id']} "
+        + " ".join(
+            f"{name}={arguments[name]}"
+            for name in ("doc_types", "doc_id", "date_from", "date_to")
+            if arguments.get(name)
+        ),
+        ["doc_id", "doc_type", "date", "title", "mentions"],
+        [
+            [
+                document["doc_id"],
+                document["doc_type"],
+                document["date_from"],
+                document["title"],
+                document["mentions"],
+            ]
+            for document in found["documents"]
+        ],
+    )
     for passage in found["passages"]:
         context.cite(result, passage, max_notes=0)
-    documents = "; ".join(
-        f"{document['doc_id']} {document['doc_type']} ({document['mentions']}) "
-        f"{document['title'][:50]}"
-        for document in found["documents"][:15]
-    )
-    more = len(found["documents"]) - 15
-    result.text = (
-        f"{entity['name']} [{entity['entity_id']}]: {found['total_mentions']} "
-        f"annotated mentions in {len(found['documents'])} documents; "
-        f"{len(found['passages'])} passages shown, taken in turn from the documents. "
-        f"Mentions per document: {documents}"
-        + (f"; and {more} more documents" if more > 0 else "")
-        + "."
-    )
+    shown = len(found["passages"]) + (arguments.get("offset") or 0)
+    if found["total_mentions"] > shown:
+        result.text = (
+            f"{len(found['passages'])} passages shown, taken in turn from the documents; "
+            "narrow with doc_id or page on with offset for more."
+        )
     return result
 
 
@@ -346,25 +391,19 @@ def tool_chronology(arguments: dict, context: ToolContext) -> ToolResult:
             "No chronology entry falls in this range; these are the nearest entries "
             "before and after it. "
         )
-    lines = []
     for entry in entries:
-        context.cite(
+        citable = context.cite(
             result, store.passage(entry["doc_id"], 0, len(entry["text"]), with_notes=False)
         )
         places = "; ".join(
-            place["name"]
+            f"{place['name']} [{place['entity_id']}]"
             + (f" ({place['lat']:.2f}, {place['lon']:.2f})" if place["lat"] is not None else "")
-            for place in entry["places"][:6]
+            for place in entry["places"][:8]
         )
-        date = (
-            entry["date_from"]
-            if entry["date_from"] == entry["date_to"]
-            else f"{entry['date_from']}/{entry['date_to']}"
-        )
-        lines.append(f"{date} | {entry['doc_id']} | places: {places or '—'}")
+        if places:
+            citable.notes.append(f"[Places annotated in this entry] {places}")
     result.count = len(entries)
-    result.summary = str(len(entries))
-    result.text = note + "date | doc_id | annotated places\n" + "\n".join(lines)
+    result.text = note
     return result
 
 

@@ -262,7 +262,23 @@ def test_tool_round_and_cited_answer(api, fallbacks):
     assert search_result["source"] == SOURCE_URL
     assert search_result["citations"] == {"enabled": True}
     assert [part["text"][:9] for part in search_result["content"]] == ["⟦55r⟧ am ", "[Editoria"]
-    assert results["content"][1] == {"type": "text", "text": "[search] 1 passage."}
+    hint = tool_result["content"][1]
+    assert hint["type"] == "search_result" and "not a source" in hint["title"]
+    assert hint["content"] == [{"type": "text", "text": "1 passage."}]
+    assert len(results["content"]) == 1, "nothing follows the tool results as loose text"
     assert body["messages"][:1] == requests[0]["body"]["messages"], "the transcript only grows"
     assert body["system"] == requests[0]["body"]["system"]
     assert body["tools"] == requests[0]["body"]["tools"]
+
+
+def test_harness_note_travels_as_a_system_message(api):
+    client, _ = api
+    conversation = converse(client, fallbacks=False)
+    run_turn(conversation)
+    conversation.add_tool_outputs(
+        [ToolOutput("toolu_1", "search", "No matches.")], note="Answer now."
+    )
+    assert conversation.messages[-2]["content"] == [
+        {"type": "tool_result", "tool_use_id": "toolu_1", "content": "No matches."}
+    ]
+    assert conversation.messages[-1] == {"role": "system", "content": "Answer now."}

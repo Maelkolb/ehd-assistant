@@ -16,10 +16,10 @@ def context_for(store, sandbox, language="de"):
     )
 
 
-def run_tool(store, sandbox, name, **arguments):
+def run_tool(store, sandbox, tool_name, /, **arguments):
     context = context_for(store, sandbox)
     return ToolBox(python=True, wikipedia=False).run(
-        ToolCall("c1", name, arguments), context
+        ToolCall("c1", tool_name, arguments), context
     ), context
 
 
@@ -282,3 +282,35 @@ def test_short_remark_before_a_tool_call_goes_to_the_trail_not_the_answer(make_a
     kinds = [event["type"] for event in events]
     assert kinds[:6] == ["start", "block", "text", "reset", "thinking", "tool_call"]
     assert events[-1]["answer"]["text"] == "Er war in Berlin."
+
+
+def test_counts_and_register_facts_are_citable_sources(store, sandbox):
+    result, _ = run_tool(store, sandbox, "grep", pattern="toises")
+    table = result.new_sources[0]
+    assert table.kind == "data" and table.data["columns"] == [
+        "doc_id",
+        "doc_type",
+        "title",
+        "matches",
+    ]
+    assert table.data["rows"][0][0] == "H0000100" and result.text == ""
+
+    result, _ = run_tool(store, sandbox, "entity_mentions", entity_id="H0000010")
+    assert result.new_sources[0].kind == "data"
+    assert result.new_sources[0].title.endswith("Bonpland, Aimé")
+
+    result, _ = run_tool(store, sandbox, "lookup_entity", name="Königstein")
+    assert "Annotated 1 times in 1 documents" in result.sources[0].text
+    assert "Coordinates 50.9200, 14.0700" in result.sources[0].text and result.text == ""
+
+    result, _ = run_tool(store, sandbox, "chronology", date_from="1805-03")
+    assert result.sources[0].notes == [
+        "[Places annotated in this entry] Berlin [H0000002] (52.52, 13.40)"
+    ]
+
+    result, _ = run_tool(store, sandbox, "read_document", doc_id="H0000200")
+    assert result.sources[0].notes[0].startswith("[Document record] H0000200 | letter |")
+    assert result.text == ""
+
+    result, _ = run_tool(store, sandbox, "list_documents", doc_type="chronology")
+    assert result.new_sources[0].data["rows"][0][:3] == ["H0000300", "chronology", "1805-03-11"]
