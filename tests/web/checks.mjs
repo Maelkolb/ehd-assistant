@@ -57,6 +57,32 @@ const focused = (page) => page.evaluate(() => {
     assert.ok(html.includes('<code>code &lt;b&gt;</code>'), html);
   });
 
+  await check('table cells that name documents or register entries link to the edition', async () => {
+    const out = await page.evaluate(async () => {
+      const { sortableTable } = await import('./assets/js/artifacts/table.js');
+      const table = sortableTable(
+        ['doc_id', 'page', 'recipient', 'n'],
+        [['H0019734', '56v', 'Kunth, Carl Sigismund', 3], ['unbekannt', '1r', 'javascript', 1]],
+        {
+          H0019734: { url: 'https://edition-humboldt.de/v12/H0019734', kind: 'document', title: 'Tagebuch' },
+          'Kunth, Carl Sigismund': { url: 'https://edition-humboldt.de/v12/H0001517', kind: 'entity' },
+          javascript: { url: 'javascript:alert(1)', kind: 'entity' },
+        });
+      const links = [...table.querySelectorAll('a')];
+      return {
+        hrefs: links.map((link) => link.getAttribute('href')),
+        safe: links.every((link) => link.target === '_blank' && link.rel.includes('noopener')),
+        cells: table.querySelectorAll('tbody td').length,
+      };
+    });
+    assert.deepEqual(out.hrefs, [
+      'https://edition-humboldt.de/v12/H0019734',
+      'https://edition-humboldt.de/v12/H0019734/56v',
+      'https://edition-humboldt.de/v12/H0001517',
+    ]);
+    assert.ok(out.safe && out.cells === 8, JSON.stringify(out));
+  });
+
   await check('markdown renders blocks and tolerates half-streamed input', async () => {
     const out = await page.evaluate(async () => {
       const { renderMarkdown } = await import('./assets/js/markdown.js');

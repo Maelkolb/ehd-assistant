@@ -203,7 +203,13 @@ class SourceRegistry:
             kind="data",
             title=title,
             label=self.words["data"],
-            data={"sql": sql, "columns": columns, "rows": rows[:100], "truncated": truncated},
+            data={
+                "sql": sql,
+                "columns": columns,
+                "rows": rows[:100],
+                "truncated": truncated,
+                "links": self.store.edition_links(cell for row in rows[:100] for cell in row),
+            },
         )
         return source, CitableText(source.id, f"Query result: {title}", "", text)
 

@@ -969,6 +969,48 @@ class DocumentStore:
             "truncated": len(rows) > max_rows,
         }
 
+    def edition_links(self, values) -> dict[str, dict]:
+        """Which of these table cells name a document or register entity, and
+        where it lives in the edition. Ids always count; titles and names only
+        when exactly one document or entity carries them."""
+        candidates = list(
+            dict.fromkeys(
+                value for value in values if isinstance(value, str) and 2 < len(value) <= 300
+            )
+        )[:800]
+        links: dict[str, dict] = {}
+        for position in range(0, len(candidates), 400):
+            chunk = candidates[position : position + 400]
+            marks = ",".join("?" * len(chunk))
+            lookups = (
+                (
+                    "document",
+                    f"SELECT doc_id AS cell, title, url FROM documents WHERE doc_id IN ({marks})",
+                ),
+                (
+                    "entity",
+                    f"SELECT entity_id AS cell, name AS title, url FROM entities"
+                    f" WHERE entity_id IN ({marks})",
+                ),
+                (
+                    "document",
+                    f"SELECT title AS cell, title, MIN(url) AS url FROM documents"
+                    f" WHERE title IN ({marks}) GROUP BY title HAVING COUNT(*) = 1",
+                ),
+                (
+                    "entity",
+                    f"SELECT name AS cell, name AS title, MIN(url) AS url FROM entities"
+                    f" WHERE name IN ({marks}) GROUP BY name HAVING COUNT(*) = 1",
+                ),
+            )
+            for kind, statement in lookups:
+                for row in self.db.execute(statement, chunk):
+                    if row["url"]:
+                        links.setdefault(
+                            row["cell"], {"url": row["url"], "kind": kind, "title": row["title"]}
+                        )
+        return links
+
     def statistics(self) -> dict:
         documents = {
             row[0]: row[1]

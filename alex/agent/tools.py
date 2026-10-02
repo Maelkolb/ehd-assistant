@@ -469,6 +469,10 @@ def tool_run_python(arguments: dict, context: ToolContext) -> ToolResult:
     shown = []
     for artifact in outcome.artifacts:
         cleaned = clean_artifact(artifact)
+        if cleaned and cleaned["type"] == "table":
+            cleaned["links"] = context.store.edition_links(
+                cell for row in cleaned["rows"] for cell in row
+            )
         if cleaned:
             context.show(result, cleaned)
             shown.append(
@@ -936,7 +940,9 @@ TOOLS = [
         "Run one read-only SQL SELECT (SQLite) on the corpus database described in the "
         "system prompt. For counting, ranking and joining: letters per correspondent or "
         "year, measurements by unit, mentions per document. The result is shown to the user "
-        "as a citable table.",
+        "as a citable table in which document ids, entity ids, exact document titles and "
+        "register names link to the edition, so select doc_id or entity_id (or the title or "
+        "name) for every row that stands for a document or an entity.",
         {
             "sql": described(STRING, "A single SELECT statement."),
             "title": described(STRING, "Short title for the result, in the user's language."),

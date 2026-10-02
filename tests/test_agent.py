@@ -314,3 +314,29 @@ def test_counts_and_register_facts_are_citable_sources(store, sandbox):
 
     result, _ = run_tool(store, sandbox, "list_documents", doc_type="chronology")
     assert result.new_sources[0].data["rows"][0][:3] == ["H0000300", "chronology", "1805-03-11"]
+
+
+def test_query_results_link_their_rows_to_the_edition(store, sandbox):
+    result, _ = run_tool(
+        store,
+        sandbox,
+        "query_data",
+        sql="SELECT doc_id, title, recipient, sender_id FROM letters",
+    )
+    links = result.new_sources[0].data["links"]
+    assert links["H0000200"] == {
+        "url": "https://edition-humboldt.de/v99/H0000200",
+        "kind": "document",
+        "title": "Humboldt an Bonpland. Berlin, 1. September 1828",
+    }
+    assert links["Humboldt an Bonpland. Berlin, 1. September 1828"]["kind"] == "document"
+    assert links["Bonpland, Aimé"]["url"].endswith("/H0000010"), "a unique register name links too"
+    assert links["H0012069"]["kind"] == "entity"
+
+    result, context = run_tool(
+        store,
+        sandbox,
+        "run_python",
+        code="ehd.show(ehd.sql('SELECT doc_id, n_chars FROM documents'), title='Dokumente')",
+    )
+    assert context.artifacts[0]["links"]["H0000100"]["url"].endswith("/H0000100")

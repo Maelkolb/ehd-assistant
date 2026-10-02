@@ -23,8 +23,27 @@ export function toCsv(columns, rows) {
   return '\uFEFF' + [columns, ...rows].map((row) => row.map(cell).join(',')).join('\r\n') + '\r\n';
 }
 
+const isWebLink = (url) => typeof url === 'string' && /^https?:\/\//.test(url);
+const PAGE_COLUMN = /^(page|seite|blatt|folio)$/i;
+const PAGE_LABEL = /^[\w.-]+$/;
+
+/** Cells that name a document or register entry of the edition link to it; a
+    page cell in a row with a linked document links to that page. */
+function cellContent(text, value, columnName, row, links) {
+  const anchor = (url, title) => h('a', { href: url, target: '_blank', rel: 'noopener noreferrer',
+                                          title: title || null, text });
+  const link = typeof value === 'string' ? links[value] : null;
+  if (link && isWebLink(link.url)) return anchor(link.url, link.title);
+  if (PAGE_COLUMN.test(columnName) && typeof value === 'string' && PAGE_LABEL.test(value)) {
+    const documentLink = row.map((cell) => (typeof cell === 'string' ? links[cell] : null))
+      .find((candidate) => candidate && candidate.kind === 'document' && isWebLink(candidate.url));
+    if (documentLink) return anchor(`${documentLink.url}/${encodeURIComponent(value)}`, documentLink.title);
+  }
+  return text;
+}
+
 /** A table whose header cells sort the rows; returns the scroll wrapper. */
-export function sortableTable(columns, rows) {
+export function sortableTable(columns, rows, links = {}) {
   const values = (column) => rows.map((row) => row[column]).filter((value) => value !== null && value !== undefined);
   // Years are labels, not quantities: left-aligned and without digit grouping.
   const years = columns.map((_, column) => values(column).length > 0 && values(column).every(isYear));
@@ -34,9 +53,11 @@ export function sortableTable(columns, rows) {
   let sorted = { column: -1, direction: 1 };
 
   const paint = (ordered) => {
-    tbody.replaceChildren(...ordered.map((row) => h('tr', {}, columns.map((_, column) => (
-      h('td', { class: numeric[column] ? 'numeric' : null,
-                text: years[column] ? String(row[column] ?? '') : display(row[column]) }))))));
+    tbody.replaceChildren(...ordered.map((row) => h('tr', {}, columns.map((name, column) => {
+      const text = years[column] ? String(row[column] ?? '') : display(row[column]);
+      return h('td', { class: numeric[column] ? 'numeric' : null },
+        cellContent(text, row[column], String(name), row, links || {}));
+    }))));
   };
 
   const headers = columns.map((name, column) => {
@@ -72,7 +93,7 @@ export function sortableTable(columns, rows) {
 export function renderTable(artifact, body, foot) {
   const columns = artifact.columns || [];
   const rows = artifact.rows || [];
-  body.append(sortableTable(columns, rows));
+  body.append(sortableTable(columns, rows, artifact.links));
   foot.append(h('span', { class: 'table-count' },
     t('table.rows', { count: formatNumber(rows.length, getLanguage()) }),
     artifact.truncated ? ` · ${t('table.truncated')}` : ''));

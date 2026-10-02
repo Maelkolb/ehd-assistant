@@ -320,7 +320,7 @@ export class SourcePanel {
     this.setHeader(badge(t('panel.data'), 7), source.title || t('panel.data'), '');
     this.fill(
       h('p', { class: 'panel-note', 'data-i18n': 'panel.data.note', text: t('panel.data.note') }),
-      sortableTable(data.columns || [], data.rows || []),
+      sortableTable(data.columns || [], data.rows || [], data.links),
       data.truncated ? h('p', { class: 'panel-note', 'data-i18n': 'panel.data.truncated',
                                 text: t('panel.data.truncated') }) : null,
       data.sql ? h('details', { class: 'panel-section', open: true },

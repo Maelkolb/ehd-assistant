@@ -111,7 +111,7 @@ chips using the sources received in `tool_result` events.
 | `text` | `doc_id`, `start`, `end`, `page` | fetch `/api/passage` |
 | `editorial`, `footnote`, `introduction` | `doc_id`, `note_id`, `start`, `end` (anchor span) | fetch `/api/notes/{note_id}` |
 | `register` | `entity_id` | fetch `/api/entities/{entity_id}` |
-| `data` | `data: {sql, columns, rows, truncated}` | the table and the SQL that produced it |
+| `data` | `data: {sql, columns, rows, truncated, links}` | the table and the SQL that produced it; cells found in `links` link to the edition |
 | `computation` | `computation: {code, output}` | the Python code and its printed output |
 | `wikipedia` | `wiki: {lang, title, extract, description, url}` | the extract, marked as external |
 
@@ -140,9 +140,16 @@ chips using the sources received in `tool_result` events.
  "attribution": {"artist": "", "license": "", "license_url": "", "file_page": "",
                  "public_domain": true}}
 
-{"id": "a7", "type": "table", "title": "…", "columns": ["jahr", "briefe"],
- "rows": [["1829", 12]], "truncated": false}
+{"id": "a7", "type": "table", "title": "…", "columns": ["doc_id", "briefe"],
+ "rows": [["H0002656", 12]], "truncated": false,
+ "links": {"H0002656": {"url": "https://edition-humboldt.de/v12/H0002656",
+                        "kind": "document", "title": "Alexander von Humboldt an …"}}}
 ```
+
+`links` (on tables and on `data` sources) maps cell values that name a document
+or register entity (its id, or a title or name that is unique in the edition)
+to its page in the edition. A `page` column in a row with a linked document
+links to that page.
 
 `chart.figure` is a Plotly figure (`data` + `layout`). Dates are ISO strings
 that may be partial (`1805`, `1805-03`).
