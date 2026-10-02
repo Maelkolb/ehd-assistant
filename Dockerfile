@@ -1,24 +1,34 @@
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1
+# One image for both services: the API (default command) and the sandbox.
+
+FROM python:3.12-slim AS base
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends git fonts-paratype \
+    && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml README.md ./
+COPY alex/__init__.py alex/__init__.py
+RUN pip install .
+COPY alex/ alex/
+RUN pip install --no-deps .
 
-# Lexical stack only — no torch, no sentence-transformers, no baked model.
-# (Image went from ~3 GB to well under 300 MB; Cloud Run cold starts drop.)
-RUN pip install --no-cache-dir \
-    "lxml>=4.9" "pydantic>=2.0" "numpy>=1.24" \
-    "fastapi>=0.104" "uvicorn[standard]>=0.24" \
-    "rank-bm25>=0.2.2" \
-    "anthropic>=0.116"
+# The document store is built from the edition's original TEI dump at image
+# build time. CORPUS_REF is a branch, tag or commit of the dump repository;
+# "main" is its newest state. Pin a commit for reproducible images.
+FROM base AS corpus
+ARG CORPUS_REPOSITORY=https://github.com/telota/edition-humboldt-digital.git
+ARG CORPUS_REF=main
+ENV CORPUS_REPOSITORY=${CORPUS_REPOSITORY} CORPUS_REF=${CORPUS_REF} DATA_DIR=/data
+COPY data/geo/ /data/geo/
+RUN alex fetch && alex build && rm -rf /data/ehd-source/.git
 
-COPY src/ src/
-COPY config/ config/
-COPY static/ static/
-# Indexes are build artifacts produced by:
-#   ./scripts/fetch_corpus.sh && python -m src.ingestion.ingest data/edh-source/data
-COPY data/processed/ data/processed/
-
-# Model IDs are env-only. Set at deploy time:
-#   ANTHROPIC_API_KEY, LLM_MODEL (default claude-sonnet-5), CORS_ORIGINS
-ENV PORT=8080
-EXPOSE 8080
-
-CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+FROM base AS runtime
+ENV DATA_DIR=/data MPLBACKEND=Agg
+COPY --from=corpus /data /data
+RUN useradd --system --uid 10001 --home-dir /nonexistent alex
+USER alex
+# PORT is honoured so the same image runs on platforms that assign one (Cloud Run).
+ENV PORT=8000
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3     CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT', '8000') + '/api/health', timeout=4)"
+CMD ["sh", "-c", "exec uvicorn alex.api.app:create_app --factory --host 0.0.0.0 --port ${PORT} --workers 1"]

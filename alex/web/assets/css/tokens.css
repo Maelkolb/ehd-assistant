@@ -1,0 +1,122 @@
+/* Design tokens. Rust accent and PT typefaces follow edition-humboldt.de.
+   Dark values are declared twice: once for the operating-system setting and
+   once for the explicit toggle, which must win in both directions. */
+
+:root {
+  color-scheme: light;
+
+  --bg: #f5f3ee;
+  --surface: #fdfcfa;
+  --surface-2: #ece9e2;
+  --surface-3: #e3dfd6;
+  --ink: #1e1c19;
+  --ink-2: #4a4640;
+  --muted: #6b665d;
+  --border: #dcd8cf;
+  --border-strong: #c4bfb4;
+  --accent: #ac4d00;
+  --accent-strong: #8f3f00;
+  --accent-soft: #f6e6d9;
+  --on-accent: #ffffff;
+  --mark: #fae7b4;
+  --mark-ink: #1e1c19;
+  --danger: #b3261e;
+  --danger-soft: #fbe9e7;
+  --focus: #1c5cab;
+  --shadow-1: 0 1px 2px rgba(30, 28, 25, 0.06);
+  --shadow-2: 0 2px 6px rgba(30, 28, 25, 0.06), 0 12px 32px rgba(30, 28, 25, 0.1);
+  --scrim: rgba(30, 28, 25, 0.38);
+
+  /* Data colours: categorical slots in fixed order, validated for both themes. */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-6: #008300;
+  --viz-7: #4a3aa7;
+  --viz-8: #e34948;
+  --viz-grid: #e6e2da;
+  --viz-axis: #c4bfb4;
+
+  --font-serif: "PT Serif", Georgia, "Times New Roman", serif;
+  --font-sans: "PT Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace;
+
+  --measure: 46rem;
+  --gutter: 1rem;
+  --radius: 10px;
+  --radius-sm: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #161513;
+    --surface: #1f1d1b;
+    --surface-2: #292724;
+    --surface-3: #34312d;
+    --ink: #ebe7e0;
+    --ink-2: #c5c0b7;
+    --muted: #a09a90;
+    --border: #37342f;
+    --border-strong: #4d4943;
+    --accent: #eb9a6c;
+    --accent-strong: #f2b08a;
+    --accent-soft: #3b2a1d;
+    --on-accent: #1b1109;
+    --mark: #5c4a17;
+    --mark-ink: #f3ead2;
+    --danger: #f28b82;
+    --danger-soft: #3a1f1c;
+    --focus: #86b6ef;
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.45);
+    --scrim: rgba(0, 0, 0, 0.55);
+    --viz-1: #3987e5;
+    --viz-2: #d95926;
+    --viz-3: #199e70;
+    --viz-4: #c98500;
+    --viz-5: #d55181;
+    --viz-6: #008300;
+    --viz-7: #9085e9;
+    --viz-8: #e66767;
+    --viz-grid: #2f2c28;
+    --viz-axis: #4d4943;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #161513;
+  --surface: #1f1d1b;
+  --surface-2: #292724;
+  --surface-3: #34312d;
+  --ink: #ebe7e0;
+  --ink-2: #c5c0b7;
+  --muted: #a09a90;
+  --border: #37342f;
+  --border-strong: #4d4943;
+  --accent: #eb9a6c;
+  --accent-strong: #f2b08a;
+  --accent-soft: #3b2a1d;
+  --on-accent: #1b1109;
+  --mark: #5c4a17;
+  --mark-ink: #f3ead2;
+  --danger: #f28b82;
+  --danger-soft: #3a1f1c;
+  --focus: #86b6ef;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.45);
+  --scrim: rgba(0, 0, 0, 0.55);
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-6: #008300;
+  --viz-7: #9085e9;
+  --viz-8: #e66767;
+  --viz-grid: #2f2c28;
+  --viz-axis: #4d4943;
+}

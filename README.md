@@ -1,81 +1,88 @@
-# Alex — ehd-assistant
+# Alex — research assistant of the edition humboldt digital
 
-**Alex** is a domain-specific research assistant for the **edition humboldt digital** — the digital edition of Alexander von Humboldt's diaries, letters, documents and chronology (Berlin-Brandenburgische Akademie der Wissenschaften).
-
-Retrieval is **agentic and lexical**: Claude drives structured search tools built from the edition's own TEI annotations. There is no embedding/vector leg — the editors already solved spelling variance through entity annotation, which beats both embeddings and raw grep for this corpus. See `PLAN.md` for the full rationale.
-
-## Architecture
+Alex answers questions about Alexander von Humboldt from the
+[edition humboldt digital](https://edition-humboldt.de) (Berlin-Brandenburgische
+Akademie der Wissenschaften): the travel journals, letters, documents, the
+chronology, the research articles and the registers. It researches in the
+edition with tools, cites the passages it relies on, and builds maps,
+timelines, networks and charts.
 
 ```
-User query
-   │
-   ▼
-Agent loop (Claude + tools, max 4 tool rounds)
-   ├─ lookup_entity(name)            → register index (fuzzy name → entity, bio, IDs)
-   ├─ chunks_for_entity(humboldt_id) → inverted entity index (spelling-immune)
-   ├─ search(query, doc_type?, date?)→ BM25 over TEXT chunks (registers excluded)
-   ├─ grep(pattern, doc_type?)       → regex (exact phrases, measurements)
-   ├─ get_context(chunk_id)          → neighboring passages / parent document
-   ├─ where_was_humboldt(date range) → dated chronology/diary entries
-   ├─ get_document(doc_id)           → full document text
-   ├─ query_measurements(unit?, q?)  → structured <measure> annotations (+ metric)
-   ├─ create_map / create_timeline   → interactive Leaflet map / visual timeline in the widget
-   ├─ create_network(focus, types?)  → entity co-occurrence graph (persons/places/plants/institutions)
-   ├─ code_execution (Sonnet/Opus)   → Anthropic server-side Python sandbox (calculations)
-   └─ answer with span-level API citations
+browser ── /api/chat (SSE) ──► agent loop ──► model (Claude, or a local model)
+                                   │
+        search · grep · read_document · list_documents      ┐
+        lookup_entity · entity_mentions · chronology        │ document store
+        query_data (read-only SQL)                          ┘ (SQLite, built from the TEI dump)
+        run_python (sandbox: pandas, matplotlib, plotly)
+        create_map · create_timeline · create_network
 ```
 
-- **Citations**: retrieval results go to the model as citations-enabled `search_result`
-  blocks, so every answer sentence carries exact quoted spans (Anthropic Citations API).
-  The widget renders them as numbered chips; clicking opens a **source panel** with the
-  cited passage highlighted, plus a deep link into edition-humboldt.de using
-  [Text Fragments](https://developer.mozilla.org/en-US/docs/Web/URI/Fragment/Text_fragments)
-  (`#:~:text=`). Fragments highlight reliably on research articles/chronology (modern
-  German); on diary folios the diplomatic rendering differs from the regularized text,
-  so links land on the correct page without the highlight. The legacy `[Quelle N]`
-  regex path remains as fallback.
-- **Registers** (17.5k persons/places/plants/glossary/institutions) never enter text ranking; they serve entity resolution and "Wer war X?" lookups. Text mentions are annotation-indexed for persons, places, institutions (`orgName`) and plants (`<name type="plant">`, resolved by Latin name against the plant register).
-- **Editorial notes** are indexed as first-class chunks (`doc_type=editorial_note`) so the editors' voice is retrievable and attributable; inside search results they are marked `[Editorische Anmerkung der Herausgeber]` and citations into them are flagged editorial.
-- **Prompt caching**: one breakpoint on system+tools, one advancing with the newest tool round.
-- The one-shot retrieve-then-generate path is kept behind `RETRIEVAL_MODE=oneshot` for A/B comparison; `/search` is the deterministic debug endpoint.
+## What it is built on
 
-## Quick Start
+**The original data, whole.** `alex build` reads the edition's own TEI-XML dump
+([telota/edition-humboldt-digital](https://github.com/telota/edition-humboldt-digital))
+into one SQLite file. Every document is stored as a whole; nothing is cut by
+length. Pages, sections, paragraphs, editorial notes, annotated persons, places,
+institutions, plants, measurements and dates are kept as character offsets into
+the document text, so a search hit, a register mention or a citation always
+points to an exact place in an exact document. The dump is fetched at build
+time (`CORPUS_REF`, default: the newest state of `main`); no derived data is
+committed to this repository.
+
+**An agent with real tools.** The model decides how to research: ranked
+full-text search, regular expressions over the complete texts, reading
+documents by page or offset, the registers and their annotated mentions, the
+chronology, read-only SQL over the whole corpus, and a Python sandbox for
+analysis and charts.
+
+**Citations a reader can check.** Every source the model was shown is
+registered; cited sentences link to the passage with the quoted span
+highlighted, to the edition's page, and to the edition's own citation
+recommendation. Query results and computations are sources too, shown with the
+SQL or the code that produced them.
+
+**Any model.** Claude Opus 5.5 and Sonnet 5.5 through the Anthropic API, or a
+locally hosted model behind an OpenAI-compatible endpoint (vLLM, Ollama,
+llama.cpp, TGI). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Quick start
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-./run.sh setup     # install dependencies
-./run.sh fetch     # clone telota/edition-humboldt-digital @ v11.0.0 (pinned)
-./run.sh ingest    # build chunk store, BM25 text index, entity index
-./run.sh enrich    # resolve place coordinates via Wikidata (for maps)
-./run.sh serve     # http://localhost:8000
+pip install -e ".[dev]"
+cp .env.example .env          # set ANTHROPIC_API_KEY, or LOCAL_LLM_BASE_URL + LOCAL_LLM_MODEL
+
+alex fetch                    # the newest TEI dump of the edition  → data/ehd-source
+alex build                    # the document store                  → data/store/ehd.sqlite
+alex serve                    # http://127.0.0.1:8000
+
+alex ask "Wo war Humboldt im Sommer 1805?"   # the same agent in the terminal
+pytest                        # tests run on a miniature TEI corpus, no model needed
 ```
 
-## Configuration (env)
+With Docker (API and sandbox as separate containers):
 
-| Variable | Default | Notes |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | — | required for generation |
-| `LLM_MODEL` | `claude-haiku-4-5` | Claude model ID (widget can select Sonnet/Opus) |
-| `RETRIEVAL_MODE` | `agentic` | `oneshot` = legacy pipeline |
-| `EFFORT` | unset (= `high`); deploys set `medium` | `low`/`medium`/`high`/`xhigh`/`max` — thinking/output budget on Sonnet/Opus (ignored on Haiku). `medium` measured at −22% cost with quality parity (`scripts/eval_cost.py` A/B, 2026-07). |
-| `RATE_LIMIT_PER_HOUR` | `10` | Requests per IP per hour, any model. Per Cloud Run instance — deploy at `--max-instances=1` or this is effectively multiplied by the instance count. |
-| `RATE_LIMIT_OPUS_PER_HOUR` | `2` | Opus-specific per-IP sub-limit; beyond it, Opus requests transparently fall back to Sonnet (not rejected). |
-| `DAILY_REQUEST_BUDGET` | `500` | Global daily cap shared by all visitors (no per-IP daily cap by design). |
-| `CITATION_REPAIR` | `1` | `0` disables the one-shot repair pass for uncited answers |
-| `CORS_ORIGINS` | `*` (logs a warning) | comma-separated allowlist for production |
-| `GEMINI_MODEL` | — | only if falling back to Vertex AI; env-only by design |
+```bash
+cp .env.example .env
+docker compose up --build
+```
 
 ## Layout
 
-- `scripts/fetch_corpus.sh` — pinned corpus download (reproducible `data/`)
-- `src/ingestion/` — TEI parsing, chunking, register parsing, index build
-- `src/retrieval/` — BM25 (`keyword_search.py`), entity index, lexical retriever
-- `src/generation/agent.py` — the agentic tool loop (Claude)
-- `src/generation/generate.py` — legacy one-shot generation
-- `src/api/main.py` — FastAPI backend (`/chat`, `/search`, `/health`, `/stats`)
-- `data/processed/` — build artifacts: `chunk_store.json`, `bm25_text.json`, `entity_index.json`
+| Path | What |
+|---|---|
+| `alex/corpus/` | TEI reader (`tei.py`), registers, store builder, read API (`store.py`), coordinates |
+| `alex/agent/` | agent loop, tools, sources and citations, prompts |
+| `alex/llm/` | model providers: Anthropic, OpenAI-compatible |
+| `alex/sandbox/` | guarded Python worker, the `ehd` helper module, sandbox service |
+| `alex/api/` | FastAPI application, rate limiting |
+| `alex/web/` | the web client (static, no build step) and the embeddable widget |
+| `docs/` | [API](docs/API.md), [architecture](docs/ARCHITECTURE.md), [deployment](docs/DEPLOYMENT.md) |
+| `scripts/` | asset vendoring, a mock API for frontend work, a Modal example for a local model |
 
-## Tech Stack
-- **Search:** rank_bm25 + annotation-derived entity index (no vector DB)
-- **LLM:** Anthropic Claude (native tool use); OpenAI/Gemini fallbacks
-- **API:** FastAPI · **Deploy:** Docker/Cloud Run (slim image, no torch)
+## Data and licence of the edition
+
+The texts are © Berlin-Brandenburgische Akademie der Wissenschaften,
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Alex shows the
+edition's citation recommendation for every document it quotes. Place
+coordinates (`data/geo/coordinates.json`) are resolved from the GeoNames ids
+the edition records, through Wikidata (CC0) and GeoNames (CC BY 4.0).

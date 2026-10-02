@@ -1,0 +1,31 @@
+{
+  "categorical": ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"],
+  "categorical_dark": ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
+  "sequential": ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"],
+  "diverging": ["#184f95", "#2a78d6", "#6da7ec", "#b7d3f6", "#f0efec", "#f5bcbb", "#ec8684", "#e34948", "#a82b2b"],
+  "accent": "#ac4d00",
+  "ink": "#1e1c19",
+  "muted": "#6b665d",
+  "grid": "#e6e2da",
+  "axis": "#c4bfb4",
+  "background": "#fdfcfa",
+  "font_sans": "PT Sans",
+  "font_serif": "PT Serif",
+  "entity_kinds": {
+    "person": "#2a78d6",
+    "place": "#eb6834",
+    "institution": "#1baf7a",
+    "glossary": "#eda100",
+    "plant": "#008300",
+    "siglum": "#4a3aa7"
+  },
+  "doc_types": {
+    "diary": "#2a78d6",
+    "letter": "#eb6834",
+    "document": "#1baf7a",
+    "chronology": "#eda100",
+    "research_article": "#e87ba4",
+    "about": "#008300"
+  },
+  "notes": "Categorical order is fixed (never cycle; fold a 9th series into 'Other'). It is validated for adjacent marks (bars, lines, stacks) on the light surface; in scatter-like charts use at most the first three hues or add direct labels. Sequential = one hue light to dark; diverging = blue to red around a neutral grey."
+}

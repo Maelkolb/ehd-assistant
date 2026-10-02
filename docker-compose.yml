@@ -1,14 +1,60 @@
+# Alex with its Python sandbox as a separate, locked-down service.
+#
+#   cp .env.example .env   # set ANTHROPIC_API_KEY and/or LOCAL_LLM_*
+#   docker compose up --build
+#
+# The API is the only container with a route to the internet (to reach the
+# model). The sandbox sits on an internal network: no egress, no secrets,
+# read-only filesystem, capped memory, CPU and process count.
+
 services:
   api:
-    build: .
-    ports:
-      - "8000:8080"
+    build:
+      context: .
+      args:
+        CORPUS_REF: ${CORPUS_REF:-main}
+    image: ehd-assistant:${ALEX_VERSION:-latest}
+    env_file: .env
     environment:
-      - DATA_DIR=/app/data
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - LLM_MODEL=${LLM_MODEL:-claude-haiku-4-5}
-      - EFFORT=${EFFORT:-medium}
-      - RETRIEVAL_MODE=${RETRIEVAL_MODE:-agentic}
-      - CORS_ORIGINS=${CORS_ORIGINS:-*}
-    volumes:
-      - ./data:/app/data
+      SANDBOX_MODE: http
+      SANDBOX_URL: http://sandbox:8001
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:-change-me}
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks: [public, sandbox]
+    depends_on: [sandbox]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  sandbox:
+    image: ehd-assistant:${ALEX_VERSION:-latest}
+    command: ["uvicorn", "alex.sandbox.service:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      STORE_PATH: /data/store/ehd.sqlite
+      CORPUS_DIR: /data/ehd-source
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:-change-me}
+      SANDBOX_TIMEOUT_SECONDS: ${SANDBOX_TIMEOUT_SECONDS:-40}
+      SANDBOX_MEMORY_MB: 1024
+    networks: [sandbox]
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 2g
+    cpus: 2
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  public: {}
+  sandbox:
+    internal: true

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Alex ist der KI-gestützte Rechercheassistent der edition humboldt digital: Fragen an die Reisetagebücher, Briefe und die Chronologie Alexander von Humboldts, beantwortet mit Belegen aus der Edition.">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Alex – Rechercheassistent der edition humboldt digital</title>
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/pt-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/pt-serif-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/css/fonts.css">
+<link rel="stylesheet" href="assets/css/tokens.css">
+<link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="assets/css/artifacts.css">
+<script src="assets/js/boot.js"></script>
+<script type="module" src="assets/js/main.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#question" data-i18n="skip">Zum Eingabefeld springen</a>
+
+<header class="topbar">
+  <div class="brand">
+    <a class="brand-edition" href="https://edition-humboldt.de" target="_blank" rel="noopener">edition <b>humboldt</b> digital</a>
+    <span class="brand-assistant" data-i18n="brand.assistant">Alex · Rechercheassistent</span>
+  </div>
+  <div class="topbar-actions">
+    <button type="button" class="text-button" id="new-conversation">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+      <span data-i18n="header.new">Neues Gespräch</span>
+    </button>
+    <button type="button" class="icon-button is-text" id="language-toggle">EN</button>
+    <button type="button" class="icon-button" id="theme-toggle"></button>
+    <button type="button" class="icon-button" id="about-open" data-i18n-title="header.about" data-i18n-label="header.about">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r=".6" fill="currentColor"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <main class="conversation" id="main">
+    <div class="thread" id="thread" tabindex="-1">
+      <div class="column">
+        <section class="welcome" id="welcome"></section>
+        <div id="turns"></div>
+      </div>
+    </div>
+
+    <form class="composer" id="composer" autocomplete="off">
+      <div class="column">
+        <div class="composer-box">
+          <label class="visually-hidden" for="question" data-i18n="composer.label">Ihre Frage an Alex</label>
+          <textarea id="question" name="question" rows="1" enterkeyhint="send"
+                    data-i18n-placeholder="composer.placeholder"></textarea>
+          <div class="composer-row">
+            <div class="composer-options">
+              <label class="select" id="model-option" hidden>
+                <span class="visually-hidden" data-i18n="composer.model">Modell</span>
+                <select id="model" name="model"></select>
+              </label>
+              <label class="switch" id="wikipedia-option" data-i18n-title="composer.wikipediaHint" hidden>
+                <input type="checkbox" id="wikipedia" name="wikipedia">
+                <span class="switch-track" aria-hidden="true"></span>
+                <span class="label-long" data-i18n="composer.wikipedia">Wikipedia-Kontext</span>
+                <span class="label-short" aria-hidden="true">Wikipedia</span>
+              </label>
+            </div>
+            <span class="composer-count" id="count" hidden></span>
+            <button type="submit" class="send" id="send" disabled></button>
+          </div>
+        </div>
+        <p class="disclaimer" data-i18n="composer.disclaimer">Alex ist ein KI-Assistent. Antworten können Fehler enthalten – bitte anhand der zitierten Quellen prüfen.</p>
+      </div>
+    </form>
+  </main>
+
+  <aside class="panel" id="source-panel" role="dialog" aria-labelledby="panel-heading" tabindex="-1" hidden>
+    <header class="panel-head">
+      <div class="panel-heading">
+        <div class="panel-kicker" id="panel-kicker"></div>
+        <h2 id="panel-heading"></h2>
+        <p class="panel-meta" id="panel-meta" hidden></p>
+      </div>
+      <button type="button" class="icon-button" id="panel-close" data-i18n-title="panel.close" data-i18n-label="panel.close">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12"/><path d="M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="panel-body" id="panel-body"></div>
+    <footer class="panel-foot" id="panel-foot" hidden></footer>
+  </aside>
+</div>
+
+<div class="backdrop" id="panel-backdrop" hidden></div>
+
+<dialog class="about" id="about" aria-labelledby="about-title">
+  <header class="about-head">
+    <h2 id="about-title" data-i18n="about.title">Über Alex</h2>
+    <button type="button" class="icon-button" id="about-close" data-i18n-title="about.close" data-i18n-label="about.close">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12"/><path d="M18 6 6 18"/></svg>
+    </button>
+  </header>
+  <div class="about-body" id="about-body"></div>
+</dialog>
+
+<div class="visually-hidden" id="live" role="status" aria-live="polite"></div>
+<noscript><p class="noscript">Alex benötigt JavaScript. / Alex requires JavaScript.</p></noscript>
+</body>
+</html>

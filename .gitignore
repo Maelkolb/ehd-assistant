@@ -1,9 +1,13 @@
 __pycache__/
 *.pyc
-.env
-data/vectordb/
-data/processed/embeddings.npy
-*.tar.gz
 .venv/
-data/edh-source/
-data/processed/sandbox_files.json
+.env
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# fetched and built at deploy time, never committed
+data/ehd-source/
+data/store/

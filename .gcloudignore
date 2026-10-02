@@ -1,7 +1,0 @@
-.git
-__pycache__
-*.pyc
-.env
-*.tar.gz
-.venv/
-data/edh-source/

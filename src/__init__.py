@@ -1,1 +1,0 @@
-# Humboldt RAG System
