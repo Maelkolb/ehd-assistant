@@ -131,7 +131,7 @@ const focused = (page) => page.evaluate(() => {
     const first = seen.indexOf('a.skip-link');
     assert.ok(first >= 0, seen.join(' > '));
     const order = [...seen.slice(first), ...seen.slice(0, first)];
-    const expected = ['a.skip-link', 'a.brand-edition', 'button#new-conversation', 'button#language-toggle',
+    const expected = ['a.skip-link', 'button#new-conversation', 'button#language-toggle',
                       'button#theme-toggle', 'button#about-open', 'button.example'];
     assert.deepEqual(order.slice(0, expected.length), expected);
     const tail = order.slice(order.indexOf('textarea#question'));

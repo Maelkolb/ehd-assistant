@@ -85,7 +85,6 @@ a:hover { color: var(--accent-strong); }
   white-space: nowrap; letter-spacing: 0.005em; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 .brand-edition b { color: var(--accent); font-weight: 700; }
-.brand-edition:hover { color: var(--ink); text-decoration: underline; text-decoration-color: var(--border-strong); }
 .brand-assistant {
   padding-left: 0.75rem; border-left: 1px solid var(--border-strong);
   color: var(--muted); font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

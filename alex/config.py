@@ -208,7 +208,7 @@ def load_settings() -> Settings:
         map_attribution=env("MAP_ATTRIBUTION", "© OpenStreetMap-Mitwirkende"),
         links={
             "edition": env("LINK_EDITION", "https://edition-humboldt.de"),
-            "imprint": env("LINK_IMPRINT", "https://edition-humboldt.de/impressum.xql"),
-            "privacy": env("LINK_PRIVACY", "https://edition-humboldt.de/impressum.xql"),
+            "imprint": env("LINK_IMPRINT"),
+            "privacy": env("LINK_PRIVACY"),
         },
     )
