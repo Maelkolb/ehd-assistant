@@ -24,7 +24,7 @@ from alex.corpus.tei import DOC_TYPES, Document, read_document
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 TOKENIZER = "unicode61 remove_diacritics 2"
 
 SCHEMA = f"""
@@ -135,7 +135,7 @@ CREATE INDEX dates_doc ON dates (doc_id, start);
 
 VIEWS = """
 CREATE VIEW letters AS
-    SELECT d.doc_id, d.title, d.date_from, d.date_to,
+    SELECT d.doc_id, d.title, d.date_from, d.date_to, d.date_min, d.date_max,
            d.sender_id, COALESCE(s.name, d.sender_name) AS sender,
            d.recipient_id, COALESCE(r.name, d.recipient_name) AS recipient,
            d.origin_place_id, COALESCE(o.name, d.origin_place) AS origin_place,
