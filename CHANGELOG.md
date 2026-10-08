@@ -29,7 +29,8 @@ Tool use, made reliable again on Claude Sonnet 5.5 and Opus 5.5.
 **Data**
 - The `measurements` view gained a `context` column with the surrounding text,
   so measurements near a place or topic can be found in SQL
-  (`WHERE context LIKE '%Chimborazo%'`). Store schema 3; rebuild with `alex build`.
+  (`WHERE context LIKE '%Chimborazo%'`), and the `letters` view carries `date_min`
+  and `date_max` for ranges and sorting. Store schema 4; rebuild with `alex build`.
 
 **Web client**
 - Hovering or focusing a citation chip shows what it points at: the source,

@@ -73,9 +73,10 @@ editors, authors, sender_id, sender_name, recipient_id, recipient_name, origin_p
 destination_place, n_chars, n_pages, url, text)`: one row per document. `date_from`/`date_to` \
 are ISO and may be partial ('1829'); `date_min`/`date_max` are always full dates, use them to \
 compare and sort.
-- `letters(doc_id, title, date_from, date_to, sender_id, sender, recipient_id, recipient, \
-origin_place_id, origin_place, destination_place_id, destination_place, language, n_chars, \
-url)`: view with register names. Humboldt himself is entity H0012069.
+- `letters(doc_id, title, date_from, date_to, date_min, date_max, sender_id, sender, \
+recipient_id, recipient, origin_place_id, origin_place, destination_place_id, \
+destination_place, language, n_chars, url)`: view with register names. Humboldt himself is \
+entity H0012069.
 - `chronology(doc_id, date_from, date_to, title, text, url)`: view.
 - `entities(entity_id, kind, name, alternative_names, description, born, died, gnd, geonames, \
 wikidata, url, lat, lon, in_register, mention_count, document_count)`: kind is person, place, \
