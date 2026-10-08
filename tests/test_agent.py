@@ -54,7 +54,9 @@ def test_tool_input_is_validated_and_coerced(store, sandbox):
     result, _ = run_tool(store, sandbox, "search", query="Vesuv", limit="3", doc_types='["diary"]')
     assert not result.is_error and result.count == 1
     result, _ = run_tool(store, sandbox, "search", query="Vesuv", doc_types=["novel"])
-    assert result.is_error
+    assert not result.is_error and "Ignored unknown doc_types value(s) novel" in result.text
+    result, _ = run_tool(store, sandbox, "lookup_entity", name="Bonpland", kind="animal")
+    assert result.is_error and "must be one of" in result.text
     result, _ = run_tool(store, sandbox, "SEARCH", query="Vesuv")
     assert not result.is_error, "a tool name that differs only in case is accepted"
     result, _ = run_tool(store, sandbox, "teleport")
@@ -340,3 +342,77 @@ def test_query_results_link_their_rows_to_the_edition(store, sandbox):
         code="ehd.show(ehd.sql('SELECT doc_id, n_chars FROM documents'), title='Dokumente')",
     )
     assert context.artifacts[0]["links"]["H0000100"]["url"].endswith("/H0000100")
+
+
+def test_parameter_aliases_and_choice_spellings_are_accepted(store, sandbox):
+    result, _ = run_tool(store, sandbox, "lookup_entity", query="Bonpland", entity_type="Person")
+    assert not result.is_error and result.summary == "Bonpland, Aimé"
+    result, _ = run_tool(store, sandbox, "entity_mentions", humboldt_id="H0000010", top_k=3)
+    assert not result.is_error and result.count == 1
+    result, _ = run_tool(store, sandbox, "search", query="Vesuv", doc_types=["Diaries", "novel"])
+    assert not result.is_error and result.count == 1
+    assert "Ignored unknown doc_types value(s) novel" in result.text
+    result, _ = run_tool(store, sandbox, "grep", query="toises", top_k=2)
+    assert not result.is_error and result.count == 1
+    result, _ = run_tool(store, sandbox, "read_document", document_id="H0000100", page="1v")
+    assert not result.is_error and result.sources[0].text.startswith("⟦1v⟧")
+    result, _ = run_tool(store, sandbox, "search", text="Vesuv", flavour="x")
+    assert not result.is_error and "Ignored unknown parameter(s) flavour" in result.text
+    result, _ = run_tool(store, sandbox, "search", flavour="x")
+    assert result.is_error and "received: flavour" in result.text and "Parameters:" in result.text
+
+
+def test_chronology_says_when_a_range_is_cut_off(store, sandbox):
+    result, _ = run_tool(store, sandbox, "chronology", date_from="1805", limit=1)
+    assert result.count == 1 and "Only the first 1 entries" in result.text
+    assert "1805-03-11" in result.text
+
+
+def test_a_requested_map_that_was_not_created_is_asked_for_once(make_agent):
+    agent, provider, _ = make_agent(
+        [
+            tool_turn(("chronology", {"date_from": "1805"})),
+            answer_turn("Die Reise führte nach Berlin."),
+            tool_turn(
+                (
+                    "create_map",
+                    {"title": "Reise", "stations": [{"name": "Berlin", "date": "1805-03-11"}]},
+                )
+            ),
+            answer_turn("Die Karte zeigt die Station.", cited=["S1"]),
+        ],
+        suggestions=False,
+    )
+    events = list(agent.run("Zeichne eine Karte der Reise 1805.", TEST_MODEL))
+    assert any("visualisation" in note for note in provider.notes)
+    answer = events[-1]["answer"]
+    assert len(answer["artifacts"]) == 1 and answer["artifacts"][0]["type"] == "map"
+    assert answer["text"] == "Die Reise führte nach Berlin.\n\nDie Karte zeigt die Station."
+    assert answer["usage"]["tool_calls"] == 2
+
+
+def test_a_long_uncited_answer_is_written_again_with_citations(make_agent):
+    long_text = "Humboldt maß am Königstein. " * 30
+    agent, provider, _ = make_agent(
+        [
+            tool_turn(("search", {"query": "Königstein"})),
+            answer_turn(long_text),
+            answer_turn("Humboldt maß am Königstein.", cited=["S1"]),
+        ],
+        suggestions=False,
+    )
+    events = list(agent.run("Was maß Humboldt?", TEST_MODEL))
+    assert any("no citations" in note for note in provider.notes)
+    kinds = [event["type"] for event in events]
+    assert kinds.count("reset") == 1
+    answer = events[-1]["answer"]
+    assert answer["text"] == "Humboldt maß am Königstein." and answer["sources"][0]["n"] == 1
+
+
+def test_reminders_are_not_sent_without_cause(make_agent):
+    agent, provider, _ = make_agent(
+        [tool_turn(("search", {"query": "Vesuv"})), answer_turn("Kurz.", cited=["S1"])],
+        suggestions=False,
+    )
+    list(agent.run("Was schreibt Humboldt über den Vesuv?", TEST_MODEL))
+    assert provider.notes == [""]

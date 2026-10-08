@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import Iterator
@@ -23,6 +24,13 @@ logger = logging.getLogger("alex.agent")
 
 MAX_TOOL_CALLS = 60
 REMARK_CHARS = 280
+UNCITED_CHARS = 600
+WANTS_VISUALISATION = re.compile(
+    r"\b(\w*karte|map|zeitleiste|zeitstrahl|timeline|netz\w*|network|diagramm|chart|"
+    r"graph|plot|visualisier\w*|visualis\w*|visualiz\w*|zeichnen?|draw|"
+    r"kartier\w*|verorte\w*)\b",
+    re.IGNORECASE,
+)
 REFUSAL = {
     "de": "Diese Anfrage kann Alex nicht bearbeiten.",
     "en": "Alex cannot help with this request.",
@@ -107,6 +115,7 @@ class Agent:
         usage = Usage()
         blocks: list[TextBlock] = []
         trace: list[str] = []
+        reminded: set[str] = set()
         rounds = tool_calls = 0
         stop = "end"
         try:
@@ -136,7 +145,17 @@ class Agent:
                 if turn.stop == "pause":
                     continue
                 if not turn.tool_calls or not allow_tools:
-                    break
+                    reminder = self.reminder(query, blocks, context, reminded, allow_tools)
+                    if reminder is None:
+                        break
+                    kind, note = reminder
+                    reminded.add(kind)
+                    trace.append(f"reminder:{kind}")
+                    conversation.add_note(note)
+                    if kind == "citations":
+                        blocks = []
+                        yield {"type": "reset"}
+                    continue
                 rounds += 1
                 outputs = []
                 for call in turn.tool_calls:
@@ -187,6 +206,35 @@ class Agent:
             questions = self.suggestions(provider, query, answer["text"])
             if questions:
                 yield {"type": "suggestions", "questions": questions}
+
+    @staticmethod
+    def reminder(
+        query: str,
+        blocks: list[TextBlock],
+        context: ToolContext,
+        reminded: set[str],
+        allow_tools: bool,
+    ) -> tuple[str, str] | None:
+        """The model ended its turn. Once per answer, send it back when the
+        user asked for a visualisation it did not create, or when a long
+        researched answer carries no citation at all."""
+        text = "".join(block.text for block in blocks).strip()
+        if (
+            "visualisation" not in reminded
+            and allow_tools
+            and not context.artifacts
+            and WANTS_VISUALISATION.search(query)
+        ):
+            return "visualisation", prompts.VISUALISATION_REMINDER
+        cited = any(block.citations for block in blocks)
+        if (
+            "citations" not in reminded
+            and not cited
+            and len(text) >= UNCITED_CHARS
+            and context.registry.sources
+        ):
+            return "citations", prompts.CITATION_REMINDER
+        return None
 
     @staticmethod
     def relayed(stream, after_earlier_text: bool):

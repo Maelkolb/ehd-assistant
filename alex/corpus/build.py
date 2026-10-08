@@ -24,7 +24,7 @@ from alex.corpus.tei import DOC_TYPES, Document, read_document
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 TOKENIZER = "unicode61 remove_diacritics 2"
 
 SCHEMA = f"""
@@ -159,7 +159,8 @@ CREATE VIEW measurements AS
                        WHEN 'fahrenheit' THEN (m.quantity - 32) * 5.0 / 9
                        ELSE m.quantity * u.si_factor END AS si_value,
            CASE WHEN u.quantity_kind = 'temperature' THEN '°C' ELSE u.si_unit END AS si_unit,
-           m.surface, m.paragraph_id
+           m.surface, m.paragraph_id,
+           substr(d.text, MAX(1, m.start - 120), 300) AS context
     FROM measures m
     JOIN documents d ON d.doc_id = m.doc_id
     LEFT JOIN units u ON u.unit_id = m.unit;

@@ -285,6 +285,9 @@ class OpenAICompatibleConversation:
         if note:
             self.messages.append({"role": "user", "content": note})
 
+    def add_note(self, note: str) -> None:
+        self.messages.append({"role": "user", "content": note})
+
 
 class OpenAICompatibleProvider:
     native_citations = False

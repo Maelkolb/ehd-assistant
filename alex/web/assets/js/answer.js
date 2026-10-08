@@ -55,6 +55,66 @@ function chipsInto(html, references) {
   });
 }
 
+/* One preview bubble for the whole page: what a citation chip points at,
+   shown while the chip is hovered or focused. */
+let preview = null;
+let previewChip = null;
+
+function placePreview() {
+  if (!preview || preview.hidden || !previewChip) return;
+  const rect = previewChip.getBoundingClientRect();
+  if (rect.bottom < 0 || rect.top > window.innerHeight) {
+    hidePreview();
+    return;
+  }
+  const width = preview.offsetWidth;
+  const height = preview.offsetHeight;
+  const gutter = 8;
+  let left = rect.left + rect.width / 2 - width / 2;
+  left = Math.max(gutter, Math.min(left, window.innerWidth - width - gutter));
+  const below = rect.bottom + 8 + height <= window.innerHeight - gutter || rect.top - height - 8 < gutter;
+  const top = below ? rect.bottom + 8 : rect.top - height - 8;
+  preview.style.left = `${Math.round(left)}px`;
+  preview.style.top = `${Math.round(top)}px`;
+  preview.classList.toggle('is-above', !below);
+}
+
+function sourceKindText(source) {
+  if (source.doc_type) return docTypeLabel(source.doc_type);
+  const key = { register: 'panel.register', data: 'panel.data', computation: 'panel.computation',
+                wikipedia: 'panel.wikipedia' }[source.kind];
+  return key ? t(key) : '';
+}
+
+export function showPreview(chip, source, reference) {
+  if (!preview) {
+    preview = h('div', { class: 'cite-preview', id: 'cite-preview', role: 'tooltip', hidden: true });
+    document.body.append(preview);
+    window.addEventListener('scroll', placePreview, { capture: true, passive: true });
+    window.addEventListener('resize', placePreview, { passive: true });
+  }
+  previewChip = chip;
+  const quote = (reference.citedTexts || []).find((text) => text && text.trim());
+  const detail = [sourceKindText(source), source.doc_type ? source.label : '',
+    ['letter', 'document'].includes(source.doc_type) && source.date ? formatDate(source.date) : '']
+    .filter(Boolean).join(' · ');
+  clear(preview);
+  append(preview, [
+    h('span', { class: 'cite-preview-title', text: truncate(source.title || source.label || '', 120) }),
+    detail ? h('span', { class: 'cite-preview-detail', text: detail }) : null,
+    quote ? h('q', { class: 'cite-preview-quote', text: truncate(quote.replace(/⟦[^⟧]*⟧ ?/g, '').replace(/\s+/g, ' ').trim(), 260) }) : null,
+    h('span', { class: 'cite-preview-hint', text: t('cite.previewHint') }),
+  ]);
+  preview.hidden = false;
+  chip.setAttribute('aria-describedby', 'cite-preview');
+  placePreview();
+}
+
+export function hidePreview() {
+  if (preview) preview.hidden = true;
+  previewChip = null;
+}
+
 function textButton(iconName, labelKey, onClick) {
   return h('button', { type: 'button', class: 'text-button', onClick }, icon(iconName),
     h('span', { 'data-i18n': labelKey, text: t(labelKey) }));
@@ -93,9 +153,25 @@ export class TurnView {
     this.prose.addEventListener('click', (event) => {
       const chip = event.target.closest('button.cite');
       if (!chip) return;
+      hidePreview();
       const reference = this.references[Number(chip.dataset.ref)];
       const source = reference && this.sourceFor(reference.sourceId);
       if (source) this.openSource(source, reference);
+    });
+    for (const type of ['mouseover', 'focusin']) {
+      this.prose.addEventListener(type, (event) => {
+        const chip = event.target.closest('button.cite');
+        if (!chip) return;
+        const reference = this.references[Number(chip.dataset.ref)];
+        const source = reference && this.sourceFor(reference.sourceId);
+        if (source) showPreview(chip, source, reference);
+      });
+    }
+    this.prose.addEventListener('mouseout', (event) => {
+      if (event.target.closest('button.cite')) hidePreview();
+    });
+    this.prose.addEventListener('focusout', (event) => {
+      if (event.target.closest('button.cite')) hidePreview();
     });
 
     this.element = h('article', { class: 'turn' },

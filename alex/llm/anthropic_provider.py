@@ -214,6 +214,11 @@ class AnthropicConversation:
         if note:
             self.messages.append({"role": "system", "content": note})
 
+    def add_note(self, note: str) -> None:
+        """After the model ended its turn there is no user message for a
+        system message to follow, so the harness speaks as the user turn."""
+        self.messages.append({"role": "user", "content": [{"type": "text", "text": note}]})
+
     @staticmethod
     def hint(text: str) -> dict:
         return {

@@ -41,9 +41,20 @@ read-only connection with an authorizer (SELECT only), a time budget and a row l
    computation shown to the model is registered as a source (`sources.py`).
 3. Results go back to the model; the loop repeats until the model answers or
    the round budget is spent, in which case tools are withdrawn for one final turn.
-4. The answer's citations are resolved against the registered sources and
+4. When the model ends its turn, two checks may send it back once each: a
+   question that asked for a map, timeline, network or chart without one being
+   created, and a long researched answer without a single citation. The
+   reminder is appended as a user turn (after an assistant turn there is no
+   user message a mid-conversation system message could follow).
+5. The answer's citations are resolved against the registered sources and
    numbered in reading order. Citations of sources the model was never shown
    are dropped.
+
+Tool inputs are validated and coerced before a tool runs (`ToolBox.run`):
+numbers as strings, arrays as JSON text, parameter names the models like to
+use instead of the declared ones (`ALIASES`), choice values in other spellings
+(`CHOICE_SYNONYMS`). Unknown values and parameters go back to the model as a
+hint inside the tool result rather than failing the call.
 
 The transcript is append-only. With Claude Opus 5.5 and Sonnet 5.5 that keeps
 the model's thinking blocks valid across tool rounds and the prompt cache warm

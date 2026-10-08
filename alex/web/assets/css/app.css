@@ -226,6 +226,21 @@ code { font-family: var(--font-mono); font-size: 0.875em; }
 }
 .cite:hover { background: var(--accent); color: var(--on-accent); }
 
+.cite-preview {
+  position: fixed; z-index: 60; width: max-content; max-width: min(24rem, calc(100vw - 1rem)); padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-2);
+  font-family: var(--font-sans); font-size: 0.8125rem; line-height: 1.45; color: var(--ink-2); pointer-events: none;
+  display: grid; gap: 0.125rem; animation: fade-in 0.12s ease-out;
+}
+@keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+.cite-preview-title { font-weight: 700; color: var(--ink); }
+.cite-preview-detail { color: var(--muted); font-size: 0.75rem; }
+.cite-preview-quote { display: block; margin-top: 0.25rem; font-family: var(--font-serif); font-size: 0.9375rem; line-height: 1.5; color: var(--ink); quotes: "„" "“"; }
+.cite-preview-quote::before { content: open-quote; }
+.cite-preview-quote::after { content: close-quote; }
+:root[lang="en"] .cite-preview-quote, html[lang="en"] .cite-preview-quote { quotes: "“" "”"; }
+.cite-preview-hint { margin-top: 0.25rem; color: var(--muted); font-size: 0.6875rem; }
+
 /* ------------------------------------------------------------ after the answer */
 
 .turn-notice { margin-top: 1rem; }

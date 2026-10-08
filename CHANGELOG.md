@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.1.0 — 2026-10-09
+
+Tool use, made reliable again on Claude Sonnet 5.5 and Opus 5.5.
+
+**Agent**
+- The instructions no longer tell the model to stop researching early; they
+  ask it to use the tools even when it feels sure, to read the passages that
+  matter, to follow up document lists and counts, and never to offer a search
+  instead of running it. The current Claude models follow "match the effort"
+  wording literally and answered from memory after one or two calls.
+- Two reminders, each at most once per answer: when the question asked for a
+  map, timeline, network or chart and none was created, the model is sent back
+  to create it; when a long researched answer carries no citation at all, it
+  writes the answer again with citations.
+- Tool calls survive the models' habits: parameter names they tend to use
+  (`entity_type`, `humboldt_id`, `top_k`, `document_id`, `page`, `query` for
+  a pattern, …) are mapped to the declared ones, choice values in other
+  spellings or plural (`Diaries`, `letters`, `Person`) are accepted, unknown
+  values and parameters are reported back instead of failing or being dropped
+  silently, and a failed call names the parameters the tool takes.
+- `chronology` says when a date range was cut off at the limit and how to page on.
+
+**Data**
+- The `measurements` view gained a `context` column with the surrounding text,
+  so measurements near a place or topic can be found in SQL
+  (`WHERE context LIKE '%Chimborazo%'`). Store schema 3; rebuild with `alex build`.
+
+**Web client**
+- Hovering or focusing a citation chip shows what it points at: the source,
+  its page or date, and the quoted span.
+
 ## 2.0.0 — 2026-10-02
 
 A rewrite. The repository is now the installable package `alex`.

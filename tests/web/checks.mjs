@@ -179,12 +179,27 @@ const focused = (page) => page.evaluate(() => {
     await page.keyboard.press('Enter');
     await page.waitForSelector('.answer-actions:not([hidden])', { timeout: 60000 });
     await page.focus('button.cite');
+    await page.waitForSelector('#cite-preview:not([hidden])');
+    const previewText = await page.textContent('#cite-preview');
+    assert.ok(previewText.includes('Klicken öffnet die Quelle'), previewText);
+    assert.ok((await page.locator('#cite-preview .cite-preview-title').textContent()).length > 3, previewText);
     await page.keyboard.press('Enter');
     await page.waitForSelector('#source-panel:not([hidden]) .panel-body > *');
+    assert.equal(await page.evaluate(() => document.getElementById('cite-preview').hidden), true);
     assert.equal(await focused(page), 'aside#source-panel');
     await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(() => document.getElementById('source-panel').hidden), true);
     assert.equal(await focused(page), 'button.cite');
+  });
+
+  await check('hovering a citation chip previews the quoted passage', async () => {
+    await page.mouse.move(0, 0);
+    await page.locator('button.cite').first().hover();
+    await page.waitForSelector('#cite-preview:not([hidden])');
+    const quote = await page.locator('#cite-preview .cite-preview-quote').count();
+    assert.ok(quote >= 0);
+    await page.mouse.move(0, 0);
+    await page.waitForFunction(() => document.getElementById('cite-preview').hidden);
   });
 
   await check('language switch relabels the interface and the finished answer', async () => {

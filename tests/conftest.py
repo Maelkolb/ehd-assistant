@@ -208,6 +208,9 @@ class ScriptedConversation:
         self.provider.outputs.append(outputs)
         self.provider.notes.append(note)
 
+    def add_note(self, note):
+        self.provider.notes.append(note)
+
 
 class ScriptedProvider:
     native_citations = True

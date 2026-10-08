@@ -117,6 +117,11 @@ class Conversation(Protocol):
         """Append the results of the last turn's tool calls, optionally with a
         note from the harness to the model."""
 
+    def add_note(self, note: str) -> None:
+        """Append a note from the harness after a finished model turn, so the
+        model takes one more turn (used to ask for a missing visualisation or
+        for citations)."""
+
 
 class Provider(Protocol):
     native_citations: bool

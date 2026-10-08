@@ -380,9 +380,16 @@ def tool_entity_mentions(arguments: dict, context: ToolContext) -> ToolResult:
 def tool_chronology(arguments: dict, context: ToolContext) -> ToolResult:
     store = context.store
     limit = min(arguments.get("limit") or (12 if context.compact else 30), 80)
-    entries = store.chronology(arguments["date_from"], arguments.get("date_to"), limit)
+    entries = store.chronology(arguments["date_from"], arguments.get("date_to"), limit + 1)
     result = ToolResult()
     note = ""
+    if len(entries) > limit:
+        entries = entries[:limit]
+        last = entries[-1]["date_from"]
+        note = (
+            f"Only the first {limit} entries of this range are shown (up to {last}). "
+            "Narrow the dates or page on with date_from after the last entry shown. "
+        )
     if not entries:
         entries = store.chronology_neighbours(arguments["date_from"], arguments.get("date_to"))
         if not entries:
@@ -403,7 +410,7 @@ def tool_chronology(arguments: dict, context: ToolContext) -> ToolResult:
         if places:
             citable.notes.append(f"[Places annotated in this entry] {places}")
     result.count = len(entries)
-    result.text = note
+    result.text = note.strip()
     return result
 
 
@@ -1116,6 +1123,159 @@ TYPE_CHECKS = {
     "object": dict,
 }
 
+# Names models use for a parameter instead of the declared one, in the order
+# of the declared names they may stand for. An alias only applies to a tool
+# that declares the target and does not declare the alias itself.
+ALIASES: dict[str, tuple[str, ...]] = {
+    "q": ("query", "pattern", "sql", "name", "term"),
+    "query": ("pattern", "sql", "name", "term"),
+    "text": ("query", "pattern"),
+    "keywords": ("query",),
+    "search": ("query",),
+    "regex": ("pattern",),
+    "regexp": ("pattern",),
+    "expression": ("pattern",),
+    "statement": ("sql",),
+    "source": ("code",),
+    "script": ("code",),
+    "python": ("code",),
+    "top_k": ("limit",),
+    "k": ("limit",),
+    "n": ("limit",),
+    "max_results": ("limit",),
+    "max_passages": ("limit",),
+    "max": ("limit",),
+    "count": ("limit",),
+    "doc_type": ("doc_types",),
+    "doc_types": ("doc_type",),
+    "document_type": ("doc_types", "doc_type"),
+    "document_types": ("doc_types", "doc_type"),
+    "type": ("doc_types", "doc_type", "kind"),
+    "types": ("doc_types", "kinds"),
+    "kinds": ("kind",),
+    "entity_type": ("kind", "kinds"),
+    "entity_types": ("kinds", "kind"),
+    "entity_kind": ("kind",),
+    "start_date": ("date_from",),
+    "end_date": ("date_to",),
+    "from_date": ("date_from",),
+    "to_date": ("date_to",),
+    "from": ("date_from",),
+    "to": ("date_to",),
+    "date": ("date_from",),
+    "year": ("date_from",),
+    "since": ("date_from",),
+    "until": ("date_to",),
+    "document_id": ("doc_id",),
+    "document": ("doc_id",),
+    "id": ("doc_id", "entity_id", "name"),
+    "humboldt_id": ("entity_id", "focus", "name"),
+    "entity": ("entity_id", "focus", "name"),
+    "entity_name": ("name", "focus"),
+    "person": ("name", "focus"),
+    "place": ("name", "focus"),
+    "page": ("page_from",),
+    "from_page": ("page_from",),
+    "to_page": ("page_to",),
+    "folio": ("page_from",),
+    "offset": ("start",),
+    "position": ("start",),
+    "length": ("max_chars",),
+    "chars": ("max_chars",),
+    "max_length": ("max_chars",),
+    "correspondent": ("person",),
+    "title": ("title_contains",),
+    "language": ("lang",),
+    "name": ("term", "focus"),
+    "places": ("stations",),
+    "points": ("stations",),
+    "locations": ("stations",),
+    "items": ("events", "stations"),
+    "connect": ("connect_route",),
+    "route": ("connect_route",),
+    "include_picture": ("include_image",),
+    "image": ("include_image",),
+}
+
+# Spellings models use for the fixed choices.
+CHOICE_SYNONYMS = {
+    "letters": "letter",
+    "brief": "letter",
+    "briefe": "letter",
+    "correspondence": "letter",
+    "diaries": "diary",
+    "journal": "diary",
+    "journals": "diary",
+    "travel_journal": "diary",
+    "travel-journal": "diary",
+    "travel journal": "diary",
+    "tagebuch": "diary",
+    "tagebücher": "diary",
+    "documents": "document",
+    "dokument": "document",
+    "dokumente": "document",
+    "chronik": "chronology",
+    "chronologie": "chronology",
+    "chronology_entry": "chronology",
+    "research-article": "research_article",
+    "research_articles": "research_article",
+    "research article": "research_article",
+    "article": "research_article",
+    "articles": "research_article",
+    "forschungsbeitrag": "research_article",
+    "forschungsbeiträge": "research_article",
+    "persons": "person",
+    "people": "person",
+    "personen": "person",
+    "places": "place",
+    "ort": "place",
+    "orte": "place",
+    "institutions": "institution",
+    "institutionen": "institution",
+    "plants": "plant",
+    "pflanze": "plant",
+    "pflanzen": "plant",
+    "glossar": "glossary",
+    "term": "glossary",
+    "sigla": "siglum",
+    "sigle": "siglum",
+    "german": "de",
+    "deutsch": "de",
+    "english": "en",
+    "englisch": "en",
+}
+
+
+def normalised_choice(value, choices: list[str]) -> str | None:
+    text = str(value).strip().lower().replace("-", "_")
+    for candidate in (text, CHOICE_SYNONYMS.get(text), CHOICE_SYNONYMS.get(text.replace("_", "-"))):
+        if candidate in choices:
+            return candidate
+    return None
+
+
+def aliased(tool: Tool, call_input: dict) -> tuple[dict, list[str]]:
+    """Rename parameters the model gave under another name; report the rest."""
+    arguments: dict = {}
+    unknown: list[str] = []
+    for name, value in call_input.items():
+        if name in tool.properties:
+            arguments.setdefault(name, value)
+            continue
+        target = next(
+            (
+                candidate
+                for candidate in ALIASES.get(name.lower(), ())
+                if candidate in tool.properties and candidate not in call_input
+            ),
+            None,
+        )
+        if target and target not in arguments:
+            arguments[target] = value
+        else:
+            unknown.append(name)
+    return arguments, unknown
+
 
 def coerced(value, schema: dict):
     """Models sometimes send numbers as strings or arrays as JSON text."""
@@ -1168,10 +1328,12 @@ class ToolBox:
                 f"The input for {tool.name} was not usable ({call.invalid_input}); "
                 "send it again as one valid JSON object."
             )
+        given, unknown = aliased(tool, call.input)
         arguments = {}
-        for name, value in call.input.items():
-            schema = tool.properties.get(name)
-            if schema is None or value is None or value == "":
+        hints = []
+        for name, value in given.items():
+            schema = tool.properties[name]
+            if value is None or value == "":
                 continue
             value = coerced(value, schema)
             expected = TYPE_CHECKS.get(schema.get("type"))
@@ -1181,18 +1343,43 @@ class ToolBox:
             ):
                 return failure(f"{tool.name}: {name} must be of type {schema['type']}.")
             choices = schema.get("enum") or schema.get("items", {}).get("enum")
-            if choices and any(
-                item not in choices for item in (value if isinstance(value, list) else [value])
-            ):
-                return failure(f"{tool.name}: {name} must be from {', '.join(choices)}.")
+            if choices:
+                if isinstance(value, list):
+                    kept = [normalised_choice(item, choices) for item in value]
+                    dropped = [
+                        str(item) for item, ok in zip(value, kept, strict=True) if ok is None
+                    ]
+                    value = list(dict.fromkeys(item for item in kept if item))
+                    if dropped:
+                        hints.append(
+                            f"Ignored unknown {name} value(s) {', '.join(dropped)}; "
+                            f"allowed: {', '.join(choices)}."
+                        )
+                    if not value:
+                        continue
+                else:
+                    value = normalised_choice(value, choices)
+                    if value is None:
+                        return failure(f"{tool.name}: {name} must be one of {', '.join(choices)}.")
             arguments[name] = value
         missing = [name for name in tool.required if name not in arguments]
         if missing:
-            return failure(f"{tool.name}: missing required {', '.join(missing)}.")
+            received = f" (received: {', '.join(unknown)})" if unknown else ""
+            return failure(
+                f"{tool.name}: missing required {', '.join(missing)}{received}. "
+                f"Parameters: {', '.join(tool.properties)}."
+            )
+        if unknown:
+            hints.append(
+                f"Ignored unknown parameter(s) {', '.join(unknown)}; this tool takes "
+                f"{', '.join(tool.properties)}."
+            )
         try:
             result = tool.handler(arguments, context)
         except StoreError as error:
             return failure(str(error))
         if not result.is_error and tool.name in COUNTED:
             result.summary = counted(tool.name, result.count, context.language)
+        if hints and not result.is_error:
+            result.text = "\n".join(part for part in (result.text, *hints) if part)
         return result
