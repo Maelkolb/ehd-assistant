@@ -70,9 +70,7 @@ def serve(settings, host: str, port: int) -> None:
     )
 
 
-def ask(
-    settings, question: str, model: str | None, language: str, wikipedia: bool, show_events: bool
-) -> int:
+def ask(settings, question: str, model: str | None, language: str, show_events: bool) -> int:
     from alex.runtime import create_runtime
 
     runtime = create_runtime(settings)
@@ -84,7 +82,7 @@ def ask(
             file=sys.stderr,
         )
         return 2
-    for event in runtime.agent.run(question, spec, wikipedia=wikipedia, language=language):
+    for event in runtime.agent.run(question, spec, language=language):
         kind = event["type"]
         if kind == "tool_call":
             arguments = json.dumps(event["input"], ensure_ascii=False)
@@ -140,7 +138,6 @@ def main() -> int:
     ask_parser.add_argument("question")
     ask_parser.add_argument("--model")
     ask_parser.add_argument("--language", default="de", choices=["de", "en"])
-    ask_parser.add_argument("--wikipedia", action="store_true")
     ask_parser.add_argument("--thinking", action="store_true", help="print reasoning summaries")
     arguments = parser.parse_args()
 
@@ -162,7 +159,6 @@ def main() -> int:
             arguments.question,
             arguments.model,
             arguments.language,
-            arguments.wikipedia,
             arguments.thinking,
         )
     return 0

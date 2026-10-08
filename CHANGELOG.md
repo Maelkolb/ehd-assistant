@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.2.0 — 2026-10-09
+
+**Agent**
+- Three tools for the questions the probes showed the model answering by hand:
+  `entities_in_document` (who and what is annotated in a document or a page
+  range, in order of first appearance, with counts and coordinates),
+  `itinerary` (stations of a journey with register coordinates, from the
+  chronology for a date range or from a document's own place names, ready for
+  `create_map`), and `dated_passages` (the passages around the dates the
+  editors annotated in the texts: what Humboldt wrote on or about a date).
+- The Wikipedia tool and its interface switch are gone. The edition is the
+  only source again; the client makes no third-party requests except map tiles.
+
 ## 2.1.0 — 2026-10-09
 
 Tool use, made reliable again on Claude Sonnet 5.5 and Opus 5.5.

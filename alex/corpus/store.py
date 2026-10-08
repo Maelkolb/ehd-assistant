@@ -918,6 +918,156 @@ class DocumentStore:
         return self.note_passage(row["note_id"]) if row else None
 
     # ------------------------------------------------------------------
+    # Who, where and when inside the texts
+    # ------------------------------------------------------------------
+
+    def entities_in(
+        self,
+        doc_id: str,
+        start: int,
+        end: int,
+        kinds: list[str] | None = None,
+        include_notes: bool = False,
+        limit: int = 60,
+    ) -> list[dict]:
+        """Everything annotated in [start, end) of a document, one row per
+        entity (or per unregistered animal, mineral or reference), in order
+        of first appearance. Returns up to limit + 1 rows so callers can
+        tell when the span holds more."""
+        conditions = ["m.doc_id = ?", "m.start >= ?", "m.start < ?"]
+        parameters: list = [doc_id, start, end]
+        if kinds:
+            conditions.append(f"m.kind IN ({','.join('?' * len(kinds))})")
+            parameters.extend(kinds)
+        if not include_notes:
+            conditions.append("m.note_id IS NULL")
+        rows = self.db.execute(
+            "SELECT COALESCE(m.entity_id, m.kind || ':' || COALESCE(m.key, m.surface)) AS ident,"
+            " m.kind, COALESCE(e.name, m.key, m.surface) AS name, COUNT(*) AS mentions,"
+            " MIN(m.start) AS first, e.entity_id, e.lat, e.lon, e.url, e.born, e.died,"
+            " e.description, SUM(m.note_id IS NOT NULL) AS in_notes"
+            " FROM mentions m LEFT JOIN entities e ON e.entity_id = m.entity_id"
+            f" WHERE {' AND '.join(conditions)} GROUP BY ident ORDER BY first LIMIT ?",
+            [*parameters, limit + 1],
+        ).fetchall()
+        return [{**dict(row), "page": self.page_at(doc_id, row["first"])} for row in rows]
+
+    def chronology_stations(
+        self, date_from: str, date_to: str | None = None, limit: int = 200
+    ) -> tuple[list[dict], int]:
+        """Places annotated in the chronology entries of a date range, in the
+        order of the entries; a place repeated in consecutive entries is one
+        station."""
+        lower, upper = date_bounds(date_from, date_to)
+        rows = self.db.execute(
+            "SELECT d.doc_id, d.date_from, d.date_to, d.title, e.entity_id, e.name, e.lat,"
+            " e.lon, e.url, m.start FROM documents d"
+            " JOIN mentions m ON m.doc_id = d.doc_id AND m.kind = 'place'"
+            " JOIN entities e ON e.entity_id = m.entity_id"
+            " WHERE d.doc_type = 'chronology' AND d.date_min != '' AND d.date_max >= ?"
+            " AND d.date_min <= ? ORDER BY d.date_min, d.doc_id, m.start",
+            (lower, upper),
+        ).fetchall()
+        return self.collapsed_stations(rows, limit)
+
+    def document_stations(self, doc_id: str, limit: int = 300) -> tuple[list[dict], int]:
+        """Places named in a document's own text, in text order."""
+        rows = self.db.execute(
+            "SELECT m.doc_id, '' AS date_from, '' AS date_to, '' AS title, e.entity_id,"
+            " e.name, e.lat, e.lon, e.url, m.start FROM mentions m"
+            " JOIN entities e ON e.entity_id = m.entity_id"
+            " WHERE m.doc_id = ? AND m.kind = 'place' AND m.note_id IS NULL ORDER BY m.start",
+            (doc_id,),
+        ).fetchall()
+        stations, total = self.collapsed_stations(rows, limit)
+        for station in stations:
+            station["page"] = self.page_at(doc_id, station["start"])
+        return stations, total
+
+    @staticmethod
+    def collapsed_stations(rows, limit: int) -> tuple[list[dict], int]:
+        stations: list[dict] = []
+        for row in rows:
+            if stations and stations[-1]["entity_id"] == row["entity_id"]:
+                stations[-1]["mentions"] += 1
+                if row["date_to"]:
+                    stations[-1]["date_to"] = row["date_to"]
+                continue
+            stations.append({**dict(row), "mentions": 1})
+        return stations[:limit], len(stations)
+
+    def dated_passages(
+        self,
+        date_from: str,
+        date_to: str | None = None,
+        doc_types: list[str] | None = None,
+        doc_id: str | None = None,
+        limit: int = 12,
+        context: int = 320,
+    ) -> dict:
+        """Passages around the dates the editors annotated inside the texts
+        that fall in a range. Returns the passages, each with the annotated
+        date, and the total number of matching dates."""
+        lower, upper = date_bounds(date_from, date_to)
+        conditions = ["x.date_from != ''", "substr(x.date_from, 1, 4) BETWEEN ? AND ?"]
+        parameters: list = [lower[:4], upper[:4] if upper else "9999"]
+        if doc_types:
+            conditions.append(f"d.doc_type IN ({','.join('?' * len(doc_types))})")
+            parameters.extend(doc_types)
+        if doc_id:
+            conditions.append("x.doc_id = ?")
+            parameters.append(doc_id)
+        rows = self.db.execute(
+            "SELECT x.doc_id, x.start, x.date_from, x.date_to, x.surface FROM dates x"
+            f" JOIN documents d ON d.doc_id = x.doc_id WHERE {' AND '.join(conditions)}"
+            " ORDER BY x.date_from, x.doc_id, x.start",
+            parameters,
+        ).fetchall()
+        matching = [
+            row
+            for row in rows
+            if padded_date(row["date_from"], "-01-01") <= (upper or "9999")
+            and padded_date(row["date_to"] or row["date_from"], "-12-31") >= lower
+        ]
+        # a date that lies inside the range outranks a vaguer one ('1799') that merely overlaps it
+        matching.sort(
+            key=lambda row: (
+                not (
+                    padded_date(row["date_from"], "-01-01") >= lower
+                    and padded_date(row["date_to"] or row["date_from"], "-12-31")
+                    <= (upper or "9999")
+                ),
+                row["date_from"],
+                row["doc_id"],
+                row["start"],
+            )
+        )
+        per_document = max(2, limit // 3) if not doc_id else limit
+        shown: dict[str, int] = {}
+        covered: dict[str, list[tuple[int, int]]] = {}
+        passages: list[tuple[Passage, dict]] = []
+        for row in matching:
+            if len(passages) >= limit:
+                break
+            if shown.get(row["doc_id"], 0) >= per_document:
+                continue
+            text = self.text(row["doc_id"])
+            start, end = self.snapped(
+                row["doc_id"],
+                max(0, row["start"] - context),
+                min(len(text), row["start"] + len(row["surface"]) + context),
+                0,
+                len(text),
+            )
+            spans = covered.setdefault(row["doc_id"], [])
+            if any(start < span_end and span_start < end for span_start, span_end in spans):
+                continue
+            spans.append((start, end))
+            shown[row["doc_id"]] = shown.get(row["doc_id"], 0) + 1
+            passages.append((self.passage(row["doc_id"], start, end, with_notes=False), dict(row)))
+        return {"passages": passages, "total": len(matching)}
+
+    # ------------------------------------------------------------------
     # Read-only SQL
     # ------------------------------------------------------------------
 

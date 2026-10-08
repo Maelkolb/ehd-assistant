@@ -109,7 +109,6 @@ class Settings:
     max_rounds: int
     max_output_tokens: int
     suggestions: bool
-    wikipedia: bool
 
     sandbox_mode: str
     sandbox_url: str
@@ -189,7 +188,6 @@ def load_settings() -> Settings:
         max_rounds=env_int("MAX_ROUNDS", 14),
         max_output_tokens=env_int("MAX_OUTPUT_TOKENS", 32_000),
         suggestions=env_flag("SUGGESTIONS", True),
-        wikipedia=env_flag("WIKIPEDIA", True),
         sandbox_mode=env("SANDBOX_MODE", "subprocess").lower(),
         sandbox_url=env("SANDBOX_URL"),
         sandbox_token=env("SANDBOX_TOKEN"),

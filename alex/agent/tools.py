@@ -8,7 +8,6 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from alex.agent import wikipedia
 from alex.agent.sources import Source, SourceRegistry
 from alex.config import ModelSpec
 from alex.corpus.store import DOC_TYPES, DocumentStore, Passage, StoreError
@@ -16,7 +15,6 @@ from alex.llm.base import CitableText, ToolCall, ToolSpec
 from alex.sandbox.runner import Sandbox
 
 ENTITY_KINDS = ["person", "place", "institution", "plant", "glossary", "siglum"]
-MAX_WIKIPEDIA_CALLS = 4
 STRING, INTEGER, NUMBER, BOOLEAN = (
     {"type": name} for name in ("string", "integer", "number", "boolean")
 )
@@ -54,7 +52,6 @@ class ToolContext:
     spec: ModelSpec
     language: str = "de"
     artifacts: list[dict] = field(default_factory=list)
-    wikipedia_calls: int = 0
 
     @property
     def compact(self) -> bool:
@@ -411,6 +408,183 @@ def tool_chronology(arguments: dict, context: ToolContext) -> ToolResult:
             citable.notes.append(f"[Places annotated in this entry] {places}")
     result.count = len(entries)
     result.text = note.strip()
+    return result
+
+
+def span_of(store: DocumentStore, document, arguments: dict) -> tuple[int, int, str]:
+    """The stretch of a document a tool call means: a page range, offsets, or all of it."""
+    doc_id = document["doc_id"]
+    if arguments.get("page_from"):
+        start, end = store.page_span(doc_id, arguments["page_from"], arguments.get("page_to"))
+        pages = arguments["page_from"] + (
+            f"–{arguments['page_to']}" if arguments.get("page_to") else ""
+        )
+        return start, end, f"pages {pages}"
+    if arguments.get("start") is not None or arguments.get("end") is not None:
+        start = max(0, arguments.get("start") or 0)
+        end = min(document["n_chars"], arguments.get("end") or document["n_chars"])
+        return start, end, f"chars {start}–{end}"
+    return 0, document["n_chars"], "whole document"
+
+
+def tool_entities_in_document(arguments: dict, context: ToolContext) -> ToolResult:
+    store = context.store
+    document = store.document(arguments["doc_id"])
+    start, end, span = span_of(store, document, arguments)
+    limit = min(arguments.get("limit") or (40 if context.compact else 80), 200)
+    rows = store.entities_in(
+        document["doc_id"],
+        start,
+        end,
+        kinds=arguments.get("kinds"),
+        include_notes=bool(arguments.get("include_notes")),
+        limit=limit,
+    )
+    if not rows:
+        return ToolResult(
+            text=f"Nothing is annotated in {span} of {document['doc_id']}.", summary="0"
+        )
+    truncated = len(rows) > limit
+    rows = rows[:limit]
+    german = context.language == "de"
+    result = ToolResult(count=len(rows))
+    context.tabulate(
+        result,
+        ("Annotierte Entitäten in: " if german else "Annotated entities in: ")
+        + document["title"]
+        + (f" ({span})" if span != "whole document" else ""),
+        f"entities_in_document {document['doc_id']} {span}"
+        + (f" kinds={arguments['kinds']}" if arguments.get("kinds") else ""),
+        ["entity_id", "kind", "name", "mentions", "first_page", "lat", "lon"],
+        [
+            [
+                row["entity_id"] or "",
+                row["kind"],
+                row["name"],
+                row["mentions"],
+                row["page"],
+                row["lat"],
+                row["lon"],
+            ]
+            for row in rows
+        ],
+    )
+    hints = [
+        "Rows in order of first appearance; mentions are editorial annotations in the span"
+        + ("" if arguments.get("include_notes") else ", editorial notes left out")
+        + ". Read the passages with read_document before you say what happened there."
+    ]
+    if truncated:
+        hints.append(f"More than {limit} entities; narrow the span or kinds, or raise limit.")
+    result.text = " ".join(hints)
+    return result
+
+
+def tool_itinerary(arguments: dict, context: ToolContext) -> ToolResult:
+    store = context.store
+    limit = min(arguments.get("limit") or (60 if context.compact else 150), 300)
+    german = context.language == "de"
+    if arguments.get("doc_id"):
+        document = store.document(arguments["doc_id"])
+        stations, total = store.document_stations(document["doc_id"], limit)
+        title = ("Orte in: " if german else "Places in: ") + document["title"]
+        query = f"itinerary doc_id={document['doc_id']}"
+        columns = ["seq", "place", "entity_id", "page", "lat", "lon", "mentions"]
+        rows = [
+            [
+                number,
+                station["name"],
+                station["entity_id"],
+                station["page"],
+                station["lat"],
+                station["lon"],
+                station["mentions"],
+            ]
+            for number, station in enumerate(stations, 1)
+        ]
+    elif arguments.get("date_from"):
+        stations, total = store.chronology_stations(
+            arguments["date_from"], arguments.get("date_to"), limit
+        )
+        span = arguments["date_from"] + (
+            f" – {arguments['date_to']}" if arguments.get("date_to") else ""
+        )
+        title = ("Stationen " if german else "Stations ") + span
+        query = f"itinerary {span}"
+        columns = ["seq", "date", "place", "entity_id", "lat", "lon", "chronology_entry"]
+        rows = [
+            [
+                number,
+                station["date_from"]
+                + (
+                    f"/{station['date_to']}"
+                    if station["date_to"] and station["date_to"] != station["date_from"]
+                    else ""
+                ),
+                station["name"],
+                station["entity_id"],
+                station["lat"],
+                station["lon"],
+                station["doc_id"],
+            ]
+            for number, station in enumerate(stations, 1)
+        ]
+    else:
+        return failure("Give a date range (date_from, date_to) or a doc_id.")
+    if not stations:
+        return ToolResult(text="No annotated places found.", summary="0")
+    result = ToolResult(count=len(stations))
+    context.tabulate(result, title, query, columns, rows)
+    located = [station for station in stations if station["lat"] is not None]
+    missing = [station["name"] for station in stations if station["lat"] is None]
+    hints = [
+        f"{len(located)} of {len(stations)} stations have register coordinates; pass rows to "
+        "create_map with entity_id (coordinates resolve from the register)."
+    ]
+    if missing:
+        hints.append(
+            "Without coordinates: "
+            + ", ".join(dict.fromkeys(missing[:12]))
+            + ("…" if len(missing) > 12 else "")
+            + "; give lat and lon yourself only when you are sure of them, and say so."
+        )
+    if total > len(stations):
+        hints.append(f"{total - len(stations)} further stations not shown; narrow the range.")
+    result.text = " ".join(hints)
+    return result
+
+
+def tool_dated_passages(arguments: dict, context: ToolContext) -> ToolResult:
+    store = context.store
+    limit = min(arguments.get("limit") or (6 if context.compact else 12), 30)
+    found = store.dated_passages(
+        arguments["date_from"],
+        arguments.get("date_to"),
+        doc_types=arguments.get("doc_types"),
+        doc_id=arguments.get("doc_id"),
+        limit=limit,
+        context=220 if context.compact else 320,
+    )
+    if not found["passages"]:
+        return ToolResult(
+            text="No annotated date in this range. The editors annotate dates mainly in the "
+            "journals; try chronology for the editors' account, or search.",
+            summary="0",
+        )
+    result = ToolResult(count=found["total"])
+    for passage, date in found["passages"]:
+        citable = context.cite(result, passage, max_notes=0)
+        when = date["date_from"] + (
+            f"/{date['date_to']}"
+            if date["date_to"] and date["date_to"] != date["date_from"]
+            else ""
+        )
+        citable.notes.insert(0, f"[Date annotated here] {when}: “{date['surface']}”")
+    if found["total"] > len(found["passages"]):
+        result.text = (
+            f"{len(found['passages'])} of {found['total']} dated passages shown; narrow the "
+            "range or doc_types, or restrict to one doc_id."
+        )
     return result
 
 
@@ -789,41 +963,6 @@ def tool_create_network(arguments: dict, context: ToolContext) -> ToolResult:
     return result
 
 
-def tool_wikipedia_context(arguments: dict, context: ToolContext) -> ToolResult:
-    if context.wikipedia_calls >= MAX_WIKIPEDIA_CALLS:
-        return failure("Wikipedia budget for this answer is used up.")
-    context.wikipedia_calls += 1
-    info = wikipedia.get_context(
-        term=arguments.get("term", ""),
-        gnd_id=arguments.get("gnd_id") or None,
-        geonames_id=arguments.get("geonames_id") or None,
-        lang=arguments.get("lang") or context.language,
-        include_image=bool(arguments.get("include_image")),
-    )
-    if info is None:
-        return ToolResult(
-            text="No matching Wikipedia article (or Wikipedia is unreachable).", summary="0"
-        )
-    source, citable = context.registry.wikipedia(info)
-    result = ToolResult(sources=[citable], new_sources=[source], count=1, summary=info["title"])
-    image = info.get("image")
-    if image and image.get("url"):
-        context.show(
-            result,
-            {
-                "type": "image",
-                "title": info["title"],
-                "url": image["url"],
-                "attribution": {
-                    key: image.get(key, "")
-                    for key in ("artist", "license", "license_url", "file_page", "public_domain")
-                },
-            },
-        )
-        result.text = "The image is shown to the user with its licence."
-    return result
-
-
 # ----------------------------------------------------------------------
 # Tool definitions
 # ----------------------------------------------------------------------
@@ -941,6 +1080,68 @@ TOOLS = [
         },
         tool_chronology,
         required=("date_from",),
+    ),
+    Tool(
+        "dated_passages",
+        "Passages of the texts around the dates the editors annotated in them: what Humboldt "
+        "(or a correspondent) wrote on or about a date, in his own words. Complements "
+        "chronology, which is the editors' account. Coverage is partial: dates are annotated "
+        "mostly in the journals, and not every date in a manuscript is annotated.",
+        {
+            "date_from": DATE_FROM,
+            "date_to": DATE_TO,
+            "doc_types": DOC_TYPE_LIST,
+            "doc_id": described(STRING, "Only dates in this document."),
+            "limit": described(INTEGER, "Passages to return (default 12, max 30)."),
+        },
+        tool_dated_passages,
+        required=("date_from",),
+    ),
+    Tool(
+        "entities_in_document",
+        "Who and what the editors annotated in a document or in a stretch of it: persons, "
+        "places, institutions, plants, animals, minerals, references, in order of first "
+        "appearance with counts, page and coordinates. For 'whom did he meet in X', 'which "
+        "plants does this journal name', or to collect nodes for a network. Use a page range "
+        "for one episode.",
+        {
+            "doc_id": described(STRING, "Document id, e.g. H0019734."),
+            "page_from": described(STRING, "First page or leaf of the stretch, e.g. 56v."),
+            "page_to": described(STRING, "Last page (defaults to page_from)."),
+            "start": described(INTEGER, "Character offset where the stretch begins."),
+            "end": described(INTEGER, "Character offset where it ends."),
+            "kinds": string_list(
+                "Only these kinds.",
+                [
+                    "person",
+                    "place",
+                    "institution",
+                    "plant",
+                    "animal",
+                    "mineral",
+                    "glossary",
+                    "bibl",
+                ],
+            ),
+            "include_notes": described(BOOLEAN, "Also count mentions inside editorial notes."),
+            "limit": described(INTEGER, "Rows to return (default 80, max 200)."),
+        },
+        tool_entities_in_document,
+        required=("doc_id",),
+    ),
+    Tool(
+        "itinerary",
+        "Stations of a journey with coordinates, ready for create_map and create_timeline: "
+        "for a date range, the places annotated in the chronology entries in order; for a "
+        "doc_id, the places a document names in text order (a journal's own route). "
+        "Consecutive repeats are merged.",
+        {
+            "date_from": DATE_FROM,
+            "date_to": DATE_TO,
+            "doc_id": described(STRING, "Take the places from this document instead."),
+            "limit": described(INTEGER, "Stations to return (default 150, max 300)."),
+        },
+        tool_itinerary,
     ),
     Tool(
         "query_data",
@@ -1070,22 +1271,6 @@ TOOLS = [
     ),
 ]
 
-WIKIPEDIA_TOOL = Tool(
-    "wikipedia_context",
-    "A short Wikipedia summary (German or English) as outside context, optionally with an "
-    "image from Wikimedia Commons. Pass the gnd or geonames id from lookup_entity when you "
-    "have one; it identifies the article exactly. Wikipedia is not part of the edition.",
-    {
-        "term": described(STRING, "Name or term."),
-        "gnd_id": STRING,
-        "geonames_id": STRING,
-        "lang": {"type": "string", "enum": ["de", "en"]},
-        "include_image": described(BOOLEAN, "Show the article's main image to the user."),
-    },
-    tool_wikipedia_context,
-    required=("term",),
-)
-
 COUNTED = {
     "search": (("Passage", "Passagen"), ("passage", "passages")),
     "grep": (("Treffer", "Treffer"), ("match", "matches")),
@@ -1099,6 +1284,12 @@ COUNTED = {
         ("annotated mention", "annotated mentions"),
     ),
     "chronology": (("Eintrag", "Einträge"), ("entry", "entries")),
+    "dated_passages": (
+        ("datierte Stelle", "datierte Stellen"),
+        ("dated passage", "dated passages"),
+    ),
+    "entities_in_document": (("Entität", "Entitäten"), ("entity", "entities")),
+    "itinerary": (("Station", "Stationen"), ("station", "stations")),
     "query_data": (("Zeile", "Zeilen"), ("row", "rows")),
     "create_map": (("Station", "Stationen"), ("station", "stations")),
     "create_timeline": (("Ereignis", "Ereignisse"), ("event", "events")),
@@ -1153,6 +1344,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "type": ("doc_types", "doc_type", "kind"),
     "types": ("doc_types", "kinds"),
     "kinds": ("kind",),
+    "kind": ("kinds",),
     "entity_type": ("kind", "kinds"),
     "entity_types": ("kinds", "kind"),
     "entity_kind": ("kind",),
@@ -1304,10 +1496,8 @@ def coerced(value, schema: dict):
 
 
 class ToolBox:
-    def __init__(self, python: bool, wikipedia: bool):
+    def __init__(self, python: bool):
         self.tools = {tool.name: tool for tool in TOOLS if python or tool.name != "run_python"}
-        if wikipedia:
-            self.tools[WIKIPEDIA_TOOL.name] = WIKIPEDIA_TOOL
 
     @property
     def specs(self) -> list[ToolSpec]:

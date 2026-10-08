@@ -12,7 +12,8 @@ browser ── /api/chat (SSE) ──► agent loop ──► model (Claude, or 
                                    │
         search · grep · read_document · list_documents      ┐
         lookup_entity · entity_mentions · chronology        │ document store
-        query_data (read-only SQL)                          ┘ (SQLite, built from the TEI dump)
+        entities_in_document · itinerary · dated_passages   │ (SQLite, built from the TEI dump)
+        query_data (read-only SQL)                          ┘
         run_python (sandbox: pandas, matplotlib, plotly)
         create_map · create_timeline · create_network
 ```

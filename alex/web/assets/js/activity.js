@@ -94,10 +94,20 @@ export function summarizeInput(name, input = {}) {
       if (nodes.length) return `${quoted(pick(input, 'title') ?? '')} · ${nodes.length}`;
       return focus ? quoted(focus) : quoted(pick(input, 'title') ?? '');
     }
-    case 'wikipedia_context': {
-      const language = pick(input, 'lang', 'language');
-      return quoted(pick(input, 'term', 'title', 'gnd_id') ?? '') + (language ? ` · ${language}` : '');
+    case 'dated_passages':
+      return [dateRange(input), ...filters({ doc_types: pick(input, 'doc_types'), doc_id: pick(input, 'doc_id') })]
+        .filter(Boolean).join(' · ');
+    case 'entities_in_document': {
+      const parts = [String(pick(input, 'doc_id') ?? '')];
+      const from = pick(input, 'page_from');
+      const to = pick(input, 'page_to');
+      if (from) parts.push(to && to !== from ? `${from}–${to}` : String(from));
+      const kinds = asList(pick(input, 'kinds'));
+      if (kinds.length) parts.push(kinds.map(kindLabel).join(', '));
+      return parts.join(' · ');
     }
+    case 'itinerary':
+      return pick(input, 'doc_id') ? String(pick(input, 'doc_id')) : dateRange(input);
     default:
       return truncate(JSON.stringify(input), 90);
   }

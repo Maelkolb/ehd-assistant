@@ -161,7 +161,7 @@ const focused = (page) => page.evaluate(() => {
                       'button#theme-toggle', 'button#about-open', 'button.example'];
     assert.deepEqual(order.slice(0, expected.length), expected);
     const tail = order.slice(order.indexOf('textarea#question'));
-    assert.deepEqual(tail.slice(0, 3), ['textarea#question', 'select#model', 'input#wikipedia'], order.join(' > '));
+    assert.deepEqual(tail.slice(0, 2), ['textarea#question', 'select#model'], order.join(' > '));
   });
 
   await check('about dialog opens and closes from the keyboard and returns focus', async () => {

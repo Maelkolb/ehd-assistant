@@ -81,8 +81,7 @@ function placePreview() {
 
 function sourceKindText(source) {
   if (source.doc_type) return docTypeLabel(source.doc_type);
-  const key = { register: 'panel.register', data: 'panel.data', computation: 'panel.computation',
-                wikipedia: 'panel.wikipedia' }[source.kind];
+  const key = { register: 'panel.register', data: 'panel.data', computation: 'panel.computation' }[source.kind];
   return key ? t(key) : '';
 }
 
@@ -362,8 +361,8 @@ export class TurnView {
       const slot = DOCTYPE_SLOTS[source.doc_type];
       if (slot) dot.style.setProperty('--dot', `var(--viz-${slot})`);
       const kindText = source.doc_type ? docTypeLabel(source.doc_type)
-        : t({ register: 'panel.register', data: 'panel.data', computation: 'panel.computation',
-              wikipedia: 'panel.wikipedia' }[source.kind] || 'panel.title');
+        : t({ register: 'panel.register', data: 'panel.data', computation: 'panel.computation' }[source.kind]
+            || 'panel.title');
       const dated = ['letter', 'document'].includes(source.doc_type) && source.date;
       const detail = [kindText, source.doc_type ? source.label : '', dated ? formatDate(source.date) : '']
         .filter(Boolean).join(' · ');

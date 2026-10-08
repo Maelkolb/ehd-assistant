@@ -23,7 +23,7 @@ Static facts the client needs before the first question.
     {"id": "local", "label": "Qwen3 (lokal)", "provider": "local",
      "tier": "standard", "default": false}
   ],
-  "features": {"python": true, "wikipedia": true, "feedback": true},
+  "features": {"python": true, "feedback": true},
   "limits": {"max_query_chars": 2000, "max_history_turns": 12},
   "links": {"edition": "https://edition-humboldt.de",
             "imprint": "https://edition-humboldt.de/impressum.xql",
@@ -41,11 +41,10 @@ Request:
 {"query": "Wen traf Humboldt in Wien?",
  "model": "claude-sonnet-5-5",
  "history": [{"role": "user", "content": "…"}, {"role": "assistant", "content": "…"}],
- "wikipedia": false,
  "language": "de"}
 ```
 
-`model`, `history`, `wikipedia` and `language` (UI language, `de` or `en`) are
+`model`, `history` and `language` (UI language, `de` or `en`) are
 optional. Errors before the stream starts are ordinary JSON responses:
 `429 {"detail": "…"}` (rate limit), `422` (validation), `503` (no model configured).
 
@@ -113,7 +112,6 @@ chips using the sources received in `tool_result` events.
 | `register` | `entity_id` | fetch `/api/entities/{entity_id}` |
 | `data` | `data: {sql, columns, rows, truncated, links}` | the table and the SQL that produced it; cells found in `links` link to the edition |
 | `computation` | `computation: {code, output}` | the Python code and its printed output |
-| `wikipedia` | `wiki: {lang, title, extract, description, url}` | the extract, marked as external |
 
 ### Artifact
 
@@ -134,11 +132,7 @@ chips using the sources received in `tool_result` events.
  "figure": {"data": [], "layout": {}}}
 
 {"id": "a5", "type": "image", "title": "…", "media_type": "image/png", "data": "<base64>",
- "alt": "", "attribution": null}
-
-{"id": "a6", "type": "image", "title": "Aimé Bonpland", "url": "https://upload.wikimedia.org/…",
- "attribution": {"artist": "", "license": "", "license_url": "", "file_page": "",
-                 "public_domain": true}}
+ "alt": ""}
 
 {"id": "a7", "type": "table", "title": "…", "columns": ["doc_id", "briefe"],
  "rows": [["H0002656", 12]], "truncated": false,
@@ -174,7 +168,9 @@ that may be partial (`1805`, `1805-03`).
 | `create_map` | `title`, `stations[]`, `connect_route` |
 | `create_timeline` | `title`, `events[]` |
 | `create_network` | `title`, `focus`, `kinds[]`, `max_nodes`, `min_shared`, `nodes[]`, `edges[]` |
-| `wikipedia_context` | `term`, `gnd_id`, `geonames_id`, `lang`, `include_image` |
+| `dated_passages` | `date_from`, `date_to`, `doc_types[]`, `doc_id`, `limit` |
+| `entities_in_document` | `doc_id`, `page_from`, `page_to`, `start`, `end`, `kinds[]`, `include_notes`, `limit` |
+| `itinerary` | `date_from`, `date_to`, `doc_id`, `limit` |
 
 ### Notes for clients
 

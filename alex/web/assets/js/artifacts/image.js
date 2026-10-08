@@ -1,5 +1,4 @@
-/** Image artifact: a figure rendered by Python (inline data) or an attributed
-    image from Wikimedia Commons (URL). */
+/** Image artifact: a figure rendered by Python. */
 
 import { h, download, slug } from '../dom.js';
 import { t } from '../i18n.js';
@@ -11,41 +10,15 @@ function dataUrl(artifact) {
   return `data:${media};base64,${artifact.data}`;
 }
 
-function attributionLine(attribution) {
-  const line = h('div', { class: 'image-credit' });
-  const parts = [];
-  if (attribution.artist) parts.push(attribution.artist);
-  const licence = attribution.public_domain ? t('image.publicDomain') : attribution.license;
-  if (licence) {
-    parts.push(attribution.license_url && /^https?:\/\//.test(attribution.license_url)
-      ? h('a', { href: attribution.license_url, target: '_blank', rel: 'noopener noreferrer', text: licence })
-      : licence);
-  }
-  if (attribution.file_page && /^https?:\/\//.test(attribution.file_page)) {
-    parts.push(h('a', { href: attribution.file_page, target: '_blank', rel: 'noopener noreferrer',
-                        'data-i18n': 'image.commons', text: t('image.commons') }));
-  }
-  parts.forEach((part, index) => {
-    if (index) line.append(' · ');
-    line.append(part);
-  });
-  return line;
-}
-
-export function renderImage(artifact, body, foot) {
-  const inline = Boolean(artifact.data);
-  const source = inline ? dataUrl(artifact)
-    : (/^https:\/\//.test(artifact.url || '') ? artifact.url : '');
+export function renderImage(artifact, body) {
   const image = h('img', { class: 'image-figure', alt: artifact.alt || artifact.title || '',
-                           loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer' });
+                           loading: 'lazy', decoding: 'async' });
   image.addEventListener('error', () => {
     image.replaceWith(h('p', { class: 'artifact-error', 'data-i18n': 'chart.failed', text: t('chart.failed') }));
   });
-  if (source) image.src = source;
+  if (artifact.data) image.src = dataUrl(artifact);
   body.append(image);
-  if (artifact.attribution) foot.append(attributionLine(artifact.attribution));
-
-  if (!inline) return {};
+  if (!artifact.data) return {};
   return {
     downloadLabel: 'artifact.download.image',
     download: () => {

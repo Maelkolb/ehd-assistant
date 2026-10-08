@@ -69,14 +69,12 @@ class Agent:
         query: str,
         spec: ModelSpec,
         history: list[dict] | None = None,
-        wikipedia: bool = False,
         language: str = "de",
     ) -> Iterator[dict]:
         started = time.time()
         request_id = uuid.uuid4().hex[:12]
         provider = self.providers[spec.provider]
-        wikipedia = wikipedia and self.settings.wikipedia
-        toolbox = ToolBox(python=self.sandbox.enabled, wikipedia=wikipedia)
+        toolbox = ToolBox(python=self.sandbox.enabled)
         context = ToolContext(
             store=self.store,
             sandbox=self.sandbox,
@@ -100,7 +98,7 @@ class Agent:
         conversation = provider.conversation(
             spec,
             system,
-            prompts.context_note(language, wikipedia, question_language),
+            prompts.context_note(language, question_language),
             toolbox.specs,
             history or [],
             query,

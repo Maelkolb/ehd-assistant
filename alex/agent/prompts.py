@@ -46,8 +46,13 @@ the question needs, and do not stop with a partial answer while rounds remain.
 narrowed with doc_types or dates when the question says where to look. This finds annotated \
 mentions regardless of historical spelling. Read the passages that matter with \
 `read_document` before you summarise them.
-- Where was Humboldt, what happened when, stations of a journey: `chronology`, with a date \
-range as narrow as the question allows.
+- Where was Humboldt, what happened when: `chronology`, with a date range as narrow as the \
+question allows. What Humboldt himself wrote on or about a date: `dated_passages`.
+- Who and what appears in a document or in one stretch of it (people met, plants collected, \
+places named): `entities_in_document`, with a page range when the question is about one \
+episode.
+- Stations of a journey with coordinates: `itinerary`, for a date range (from the chronology) \
+or for a document (its places in text order). Its rows go straight into `create_map`.
 - Topics and phrases: `search`, in the spelling and language of the sources, several short \
 queries (German, French, Spanish and Latin variants) rather than one long one. Exact forms \
 and number patterns: `grep`.
@@ -403,7 +408,7 @@ def system_prompt(
     )
 
 
-def context_note(language: str, wikipedia: bool, question_language: str = "") -> str:
+def context_note(language: str, question_language: str = "") -> str:
     interface = "German" if language == "de" else "English"
     note = (
         f"The user's interface language is {interface}; use it when the language of the "
@@ -414,12 +419,5 @@ def context_note(language: str, wikipedia: bool, question_language: str = "") ->
         note += (
             f" This question is written in {name}: answer entirely in {name}, including the "
             "titles of maps, timelines, networks and charts."
-        )
-    if wikipedia:
-        note += (
-            " The user switched on outside context: you may add brief background from "
-            "`wikipedia_context` (life dates, a portrait, where a place lies). The "
-            "edition stays the primary source, and Wikipedia content must be recognisable "
-            "as such."
         )
     return note

@@ -294,7 +294,7 @@ async def tool(
     )
 
 
-async def cited_answer(query: str, model: dict, wikipedia: bool, markers: bool = False):
+async def cited_answer(query: str, model: dict, markers: bool = False):
     script = Script()
     request_id = uuid.uuid4().hex
     yield frame("start", request_id=request_id, model=model)
@@ -423,38 +423,6 @@ async def cited_answer(query: str, model: dict, wikipedia: bool, markers: bool =
     ):
         yield event
 
-    wiki = None
-    if wikipedia:
-        wiki = script.add(
-            {
-                "kind": "wikipedia",
-                "title": "Wien",
-                "label": "Wikipedia (de)",
-                "url": "https://de.wikipedia.org/wiki/Wien",
-                "wiki": {
-                    "lang": "de",
-                    "title": "Wien",
-                    "description": "Hauptstadt Österreichs",
-                    "url": "https://de.wikipedia.org/wiki/Wien",
-                    "extract": "Wien ist die Bundeshauptstadt der Republik Österreich und "
-                    "zugleich eines der neun österreichischen Bundesländer. Um 1800 "
-                    "war Wien Residenzstadt der Habsburger und ein Zentrum der "
-                    "Naturforschung.",
-                },
-            },
-            "Um 1800 war Wien Residenzstadt der Habsburger",
-        )
-        async for event in tool(
-            "wikipedia_context",
-            "t6",
-            {"term": "Wien", "lang": "de"},
-            3,
-            "Wikipedia: Wien",
-            [wiki],
-            0.5,
-        ):
-            yield event
-
     ids = lambda sources: [source["id"] for source in sources]  # noqa: E731
     parts = [
         (
@@ -485,14 +453,6 @@ async def cited_answer(query: str, model: dict, wikipedia: bool, markers: bool =
             [data["id"]],
         ),
     ]
-    if wiki:
-        parts.append(
-            (
-                " Wien war um 1800 Residenzstadt der Habsburger und ein Zentrum der Naturforschung.",
-                [wiki["id"]],
-            )
-        )
-
     if markers:
         blocks = []
         yield frame("block")
@@ -523,9 +483,7 @@ async def cited_answer(query: str, model: dict, wikipedia: bool, markers: bool =
         async for event in run_blocks(script, parts):
             yield event
 
-    yield frame(
-        "done", answer=finish(script, script.blocks, [], model, 18.4, 6 if wikipedia else 5)
-    )
+    yield frame("done", answer=finish(script, script.blocks, [], model, 18.4, 5))
     await pause(0.6)
     yield frame(
         "suggestions",
@@ -1064,7 +1022,7 @@ def config() -> dict:
             "entities": entities,
         },
         "models": MODELS if os.environ.get("MOCK_SINGLE_MODEL") != "1" else MODELS[:1],
-        "features": {"python": True, "wikipedia": True, "feedback": True},
+        "features": {"python": True, "feedback": True},
         "limits": {"max_query_chars": 2000, "max_history_turns": 12},
         "links": {
             "edition": "https://edition-humboldt.de",
@@ -1099,7 +1057,7 @@ async def chat(request: Request):
             stream = scenario(query, model)
             break
     else:
-        stream = cited_answer(query, model, bool(body.get("wikipedia")), markers)
+        stream = cited_answer(query, model, markers)
     return StreamingResponse(
         stream,
         media_type="text/event-stream",
@@ -1289,7 +1247,7 @@ async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob: https://*.tile.openstreetmap.de https://upload.wikimedia.org; "
+        "img-src 'self' data: blob: https://*.tile.openstreetmap.de; "
         "font-src 'self'; connect-src 'self'; frame-ancestors *; base-uri 'self'; form-action 'self'"
     )
     response.headers["X-Content-Type-Options"] = "nosniff"

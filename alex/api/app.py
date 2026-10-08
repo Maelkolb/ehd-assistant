@@ -35,7 +35,6 @@ class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=MAX_QUERY_CHARS)
     model: str | None = None
     history: list[dict] = Field(default_factory=list)
-    wikipedia: bool = False
     language: str = "de"
 
 
@@ -150,7 +149,7 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
     content_security_policy = "; ".join(
         [
             "default-src 'self'",
-            f"img-src 'self' data: blob: {tile_host} https://upload.wikimedia.org",
+            f"img-src 'self' data: blob: {tile_host}",
             "style-src 'self' 'unsafe-inline'",
             "script-src 'self'",
             "connect-src 'self'",
@@ -211,7 +210,6 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
             ],
             "features": {
                 "python": runtime.sandbox.enabled,
-                "wikipedia": settings.wikipedia,
                 "feedback": bool(settings.feedback_log),
             },
             "limits": {"max_query_chars": MAX_QUERY_CHARS, "max_history_turns": MAX_HISTORY_TURNS},
@@ -238,7 +236,7 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         def events():
             started = time.time()
             try:
-                for event in agent.run(body.query, spec, history, body.wikipedia, language):
+                for event in agent.run(body.query, spec, history, language):
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except Exception:
                 logger.exception("chat failed")

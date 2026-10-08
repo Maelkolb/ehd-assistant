@@ -1,6 +1,6 @@
 /** The source panel: shows what a citation points at — the passage in the
     edition with the cited span highlighted, a note, a register entry, a data
-    query, a computation or an external Wikipedia extract. */
+    query or a computation. */
 
 import { h, clear, append, copyText, trapFocus, truncate, formatNumber } from './dom.js';
 import { icon } from './icons.js';
@@ -144,7 +144,6 @@ export class SourcePanel {
     try {
       if (source.kind === 'data') this.renderData(source);
       else if (source.kind === 'computation') this.renderComputation(source);
-      else if (source.kind === 'wikipedia') this.renderWikipedia(source, citation);
       else if (source.kind === 'register') await this.renderRegister(source, stale);
       else if (NOTE_KINDS.has(source.kind) && source.note_id !== undefined && source.note_id !== null) {
         await this.renderNote(source, citation, stale);
@@ -340,18 +339,5 @@ export class SourcePanel {
         h('summary', { 'data-i18n': 'activity.code', text: t('activity.code') }),
         h('pre', {}, h('code', { text: computation.code }))) : null);
     this.setFoot(computation.code ? copyButton('panel.copyCode', computation.code) : null);
-  }
-
-  renderWikipedia(source, citation) {
-    const wiki = source.wiki || {};
-    this.setHeader(badge(t('panel.wikipedia')), wiki.title || source.title || '',
-      truncate(wiki.description || '', 120));
-    const extract = wiki.extract || '';
-    const ranges = (citation.citedTexts || []).map((quote) => findQuote(extract, quote)).filter(Boolean);
-    this.fill(
-      h('p', { class: 'panel-note', 'data-i18n': 'panel.wikipedia.note', text: t('panel.wikipedia.note') }),
-      h('article', { class: 'paper is-external', lang: wiki.lang || null },
-        renderPassage({ text: extract, highlights: ranges })));
-    this.setFoot(externalLink(wiki.url || source.url, t('panel.wikipedia.open'), 'button-link is-primary'));
   }
 }

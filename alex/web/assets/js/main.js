@@ -11,7 +11,7 @@ import { sharedAnswer } from './share.js';
 
 const FALLBACK_CONFIG = {
   assistant: 'Alex', corpus: { version: '', documents: {}, entities: {} }, models: [],
-  features: { python: false, wikipedia: false, feedback: false },
+  features: { python: false, feedback: false },
   limits: { max_query_chars: 2000, max_history_turns: 12 },
   links: { edition: 'https://edition-humboldt.de' }, map: {},
 };
@@ -33,8 +33,6 @@ const elements = {
   count: document.getElementById('count'),
   model: document.getElementById('model'),
   modelOption: document.getElementById('model-option'),
-  wikipedia: document.getElementById('wikipedia'),
-  wikipediaOption: document.getElementById('wikipedia-option'),
   live: document.getElementById('live'),
   about: document.getElementById('about'),
   aboutBody: document.getElementById('about-body'),
@@ -140,8 +138,6 @@ function setupModels() {
                          text: hint ? `${model.label} · ${hint}` : model.label });
   }));
   elements.modelOption.hidden = models.length < 2;
-  elements.wikipediaOption.hidden = !config.features?.wikipedia;
-  elements.wikipedia.checked = store.get('alex.wikipedia') === '1';
   elements.question.maxLength = config.limits?.max_query_chars || 2000;
 }
 
@@ -182,7 +178,6 @@ async function ask(question) {
     language: getLanguage(),
   };
   if (elements.model.value) body.model = elements.model.value;
-  if (config.features?.wikipedia) body.wikipedia = elements.wikipedia.checked;
   turns.push({ query, view });
   elements.turns.append(view.element);
   elements.question.value = '';
@@ -328,8 +323,6 @@ function bind() {
     }
   });
   elements.model.addEventListener('change', () => store.set('alex.model', elements.model.value));
-  elements.wikipedia.addEventListener('change', () => (
-    store.set('alex.wikipedia', elements.wikipedia.checked ? '1' : '0')));
   document.getElementById('new-conversation').addEventListener('click', newConversation);
   elements.languageToggle.addEventListener('click', () => {
     setLanguage(getLanguage() === 'de' ? 'en' : 'de');

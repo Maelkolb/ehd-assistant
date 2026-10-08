@@ -78,13 +78,6 @@ const STATES = {
       }
     }
   },
-  wikipedia: async (page) => {
-    await page.locator('#wikipedia-option').click();
-    await ask(page, 'Wen traf Humboldt 1797 in Wien?');
-    await done(page);
-    await page.locator('.source-row', { hasText: /Wikipedia/ }).first().click();
-    await page.waitForTimeout(700);
-  },
   map: async (page, shot) => {
     await ask(page, 'Zeichne eine Karte der Italienreise 1805.');
     await done(page);

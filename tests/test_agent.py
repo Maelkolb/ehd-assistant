@@ -18,9 +18,7 @@ def context_for(store, sandbox, language="de"):
 
 def run_tool(store, sandbox, tool_name, /, **arguments):
     context = context_for(store, sandbox)
-    return ToolBox(python=True, wikipedia=False).run(
-        ToolCall("c1", tool_name, arguments), context
-    ), context
+    return ToolBox(python=True).run(ToolCall("c1", tool_name, arguments), context), context
 
 
 def test_search_tool_returns_citable_passages(store, sandbox):
@@ -41,7 +39,7 @@ def test_search_tool_returns_citable_passages(store, sandbox):
 
 def test_same_passage_is_one_source(store, sandbox):
     context = context_for(store, sandbox)
-    box = ToolBox(python=True, wikipedia=False)
+    box = ToolBox(python=True)
     first = box.run(ToolCall("c1", "search", {"query": "Königstein"}), context)
     second = box.run(ToolCall("c2", "search", {"query": "Barometer Königstein"}), context)
     assert first.sources[0].source_id == second.sources[0].source_id
@@ -114,7 +112,7 @@ def test_map_resolves_places_from_the_register(store, sandbox):
 
 def test_artifact_with_same_title_replaces_the_earlier_one(store, sandbox):
     context = context_for(store, sandbox)
-    box = ToolBox(python=True, wikipedia=False)
+    box = ToolBox(python=True)
     for label in ("Erster", "Zweiter"):
         box.run(
             ToolCall(
@@ -221,7 +219,9 @@ def test_system_prompt_states_the_corpus_and_the_citation_rule(make_agent):
     assert {"search", "read_document", "query_data", "run_python", "create_map"} <= {
         tool.name for tool in provider.tools
     }
-    assert "wikipedia_context" not in {tool.name for tool in provider.tools}
+    assert {"itinerary", "dated_passages", "entities_in_document"} <= {
+        tool.name for tool in provider.tools
+    }
 
 
 def test_source_markers_become_citations():
@@ -255,7 +255,7 @@ def test_marker_ranges_and_bare_numbers():
 
 
 def test_tool_summaries_follow_the_interface_language(store, sandbox):
-    box = ToolBox(python=True, wikipedia=False)
+    box = ToolBox(python=True)
     german = box.run(ToolCall("c1", "search", {"query": "Vesuv"}), context_for(store, sandbox))
     english = box.run(
         ToolCall("c1", "search", {"query": "Vesuv"}), context_for(store, sandbox, "en")
@@ -425,6 +425,48 @@ def test_question_language_is_detected_and_passed_on(make_agent):
     assert detect_language("Wen traf Humboldt 1797 in Wien?", "en") == "de"
     assert detect_language("Où était Humboldt en mars 1801 ?", "de") == "fr"
     assert detect_language("Bonpland", "de") == "de"
-    assert "answer entirely in English" in context_note("de", False, "en")
-    assert "answer entirely" not in context_note("de", False, "de")
+    assert "answer entirely in English" in context_note("de", "en")
+    assert "answer entirely" not in context_note("de", "de")
     assert "Deutsch" in __import__("alex.agent.prompts", fromlist=["x"]).CITATION_REMINDER["de"]
+
+
+def test_entities_in_document_lists_the_cast_in_order(store, sandbox):
+    result, _ = run_tool(store, sandbox, "entities_in_document", doc_id="H0000100")
+    table = result.new_sources[0]
+    assert table.kind == "data"
+    names = [row[2] for row in table.data["rows"]]
+    assert names[:3] == ["Königstein", "Bonpland, Aimé", "Cinchona officinalis"]
+    assert "Willdenow" not in names, "mentions inside editorial notes are left out by default"
+    result, _ = run_tool(
+        store, sandbox, "entities_in_document", doc_id="H0000100", include_notes=True
+    )
+    assert "Willdenow" in [row[2] for row in result.new_sources[0].data["rows"]]
+    result, _ = run_tool(
+        store, sandbox, "entities_in_document", doc_id="H0000100", page_from="1v", kinds=["place"]
+    )
+    rows = result.new_sources[0].data["rows"]
+    assert [row[2] for row in rows] == ["Loxa"] and rows[0][4] == "1v"
+    assert result.summary == "1 Entität"
+
+
+def test_itinerary_from_chronology_and_from_a_document(store, sandbox):
+    result, _ = run_tool(store, sandbox, "itinerary", date_from="1805")
+    rows = result.new_sources[0].data["rows"]
+    assert [row[2] for row in rows] == ["Berlin"] and rows[0][4] == 52.52
+    assert "1 of 1 stations have register coordinates" in result.text
+    result, _ = run_tool(store, sandbox, "itinerary", doc_id="H0000100")
+    rows = result.new_sources[0].data["rows"]
+    assert [row[1] for row in rows] == ["Königstein", "Loxa"]
+    assert "Without coordinates: Loxa" in result.text
+    result, _ = run_tool(store, sandbox, "itinerary")
+    assert result.is_error
+
+
+def test_dated_passages_bring_the_text_around_an_annotated_date(store, sandbox):
+    result, _ = run_tool(store, sandbox, "dated_passages", date_from="1797-06")
+    assert result.count == 1 and result.summary == "1 datierte Stelle"
+    citable = result.sources[0]
+    assert citable.notes[0] == "[Date annotated here] 1797-06-14: “14ten Junius 97”"
+    assert "Barometer" in citable.text
+    result, _ = run_tool(store, sandbox, "dated_passages", date_from="1850")
+    assert result.summary == "nichts gefunden" and "chronology" in result.text

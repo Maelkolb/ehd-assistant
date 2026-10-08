@@ -59,7 +59,9 @@ const TOOL_ICONS = {
   create_map: 'pin',
   create_timeline: 'timeline',
   create_network: 'network',
-  wikipedia_context: 'globe',
+  dated_passages: 'calendar',
+  entities_in_document: 'mentions',
+  itinerary: 'compass',
 };
 
 export function icon(name, className) {

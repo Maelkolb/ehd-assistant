@@ -25,7 +25,6 @@ LABELS = {
         "register": "Register",
         "data": "Datenabfrage",
         "computation": "Berechnung",
-        "wikipedia": "Wikipedia",
     },
     "en": {
         "diary": "Journal",
@@ -42,7 +41,6 @@ LABELS = {
         "register": "Register",
         "data": "Data query",
         "computation": "Computation",
-        "wikipedia": "Wikipedia",
     },
 }
 NOTE_PREFIX = {"editorial": "Editorial note by the editors", "footnote": "Footnote"}
@@ -65,7 +63,6 @@ class Source:
     entity_id: str = ""
     data: dict | None = None
     computation: dict | None = None
-    wiki: dict | None = None
 
     def public(self) -> dict:
         optional = {
@@ -224,21 +221,3 @@ class SourceRegistry:
         return source, CitableText(
             source.id, f"Python output: {title}", "", output or "(no printed output)"
         )
-
-    def wikipedia(self, info: dict) -> tuple[Source, CitableText]:
-        source, _ = self.register(
-            ("wikipedia", info["url"]),
-            kind="wikipedia",
-            title=info["title"],
-            label=f"Wikipedia ({info['lang']})",
-            url=info["url"],
-            wiki={
-                "lang": info["lang"],
-                "title": info["title"],
-                "extract": info["extract"][:2500],
-                "url": info["url"],
-                "description": info.get("description", ""),
-            },
-        )
-        heading = f"Wikipedia ({info['lang']}): {info['title']} — external, not part of the edition"
-        return source, CitableText(source.id, heading, info["url"], info["extract"][:2000])

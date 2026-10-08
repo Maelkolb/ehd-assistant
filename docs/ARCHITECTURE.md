@@ -101,7 +101,7 @@ network components the declarative tools produce.
 ## Web client
 
 Static files under `alex/web/`, ES modules, no build step, no third-party
-requests except map tiles and images from Wikimedia Commons. It consumes the
+requests except map tiles. It consumes the
 event stream, renders citations from the answer blocks, and fetches source
 passages from `/api/passage` for the side panel. `widget.js` embeds Alex in a
 host page as a launcher button with an iframe panel.
