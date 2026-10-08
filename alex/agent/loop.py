@@ -96,10 +96,11 @@ class Agent:
             if spec.compact
             else self.settings.max_output_tokens
         )
+        question_language = prompts.detect_language(query, language)
         conversation = provider.conversation(
             spec,
             system,
-            prompts.context_note(language, wikipedia),
+            prompts.context_note(language, wikipedia, question_language),
             toolbox.specs,
             history or [],
             query,
@@ -148,7 +149,8 @@ class Agent:
                     reminder = self.reminder(query, blocks, context, reminded, allow_tools)
                     if reminder is None:
                         break
-                    kind, note = reminder
+                    kind, notes = reminder
+                    note = notes.get(question_language) or notes["en"]
                     reminded.add(kind)
                     trace.append(f"reminder:{kind}")
                     conversation.add_note(note)
@@ -214,7 +216,7 @@ class Agent:
         context: ToolContext,
         reminded: set[str],
         allow_tools: bool,
-    ) -> tuple[str, str] | None:
+    ) -> tuple[str, dict[str, str]] | None:
         """The model ended its turn. Once per answer, send it back when the
         user asked for a visualisation it did not create, or when a long
         researched answer carries no citation at all."""

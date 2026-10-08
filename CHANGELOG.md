@@ -21,6 +21,10 @@ Tool use, made reliable again on Claude Sonnet 5.5 and Opus 5.5.
   values and parameters are reported back instead of failing or being dropped
   silently, and a failed call names the parameters the tool takes.
 - `chronology` says when a date range was cut off at the limit and how to page on.
+- The language of the question is detected from its function words and stated
+  to the model, so an English question in the German interface is answered in
+  English; the reminders are sent in the question's language, so they no
+  longer pull a rewritten answer into English.
 
 **Data**
 - The `measurements` view gained a `context` column with the surrounding text,

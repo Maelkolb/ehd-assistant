@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 SYSTEM = """\
 You are Alex, the research assistant of the edition humboldt digital (ehd), the digital \
 scholarly edition of Alexander von Humboldt's travel journals, letters, documents and \
@@ -157,17 +159,212 @@ OUT_OF_ROUNDS = (
     "and say what remains open."
 )
 
-VISUALISATION_REMINDER = (
-    "The question asked for a visualisation (a map, timeline, network or chart) and none has "
-    "been created yet. Create it now with the appropriate tool from the data you have found, "
-    "then complete the answer; do not repeat what you already wrote."
-)
+VISUALISATION_REMINDER = {
+    "en": (
+        "The question asked for a visualisation (a map, timeline, network or chart) and none "
+        "has been created yet. Create it now with the appropriate tool from the data you have "
+        "found, then complete the answer in the same language as before; do not repeat what "
+        "you already wrote."
+    ),
+    "de": (
+        "Die Frage verlangte eine Visualisierung (Karte, Zeitleiste, Netzwerk oder Diagramm), "
+        "und noch keine wurde erstellt. Erstelle sie jetzt mit dem passenden Werkzeug aus den "
+        "gefundenen Daten und schließe dann die Antwort auf Deutsch ab, ohne das bereits "
+        "Geschriebene zu wiederholen."
+    ),
+}
 
-CITATION_REMINDER = (
-    "The answer carries no citations. Write it again, supporting each factual statement with "
-    "the sources you were shown through the citation mechanism, and leave out statements the "
-    "sources do not support."
-)
+CITATION_REMINDER = {
+    "en": (
+        "The answer carries no citations. Write it again in the same language, supporting "
+        "each factual statement with the sources you were shown through the citation "
+        "mechanism, and leave out statements the sources do not support."
+    ),
+    "de": (
+        "Die Antwort enthält keine Belege. Schreibe sie noch einmal auf Deutsch und stütze "
+        "jede Tatsachenaussage über den Zitiermechanismus auf die Quellen, die dir gezeigt "
+        "wurden; lass Aussagen weg, die die Quellen nicht tragen."
+    ),
+}
+
+LANGUAGE_NAMES = {"de": "German", "en": "English", "fr": "French", "es": "Spanish"}
+LANGUAGE_MARKERS = {
+    "de": {
+        "der",
+        "die",
+        "das",
+        "und",
+        "ist",
+        "nicht",
+        "wie",
+        "wer",
+        "wen",
+        "wem",
+        "wo",
+        "was",
+        "welche",
+        "welcher",
+        "welchen",
+        "wann",
+        "warum",
+        "wieso",
+        "wohin",
+        "woher",
+        "mit",
+        "über",
+        "von",
+        "auf",
+        "ein",
+        "eine",
+        "einen",
+        "einer",
+        "im",
+        "zu",
+        "zeige",
+        "zeichne",
+        "erstelle",
+        "nenne",
+        "fasse",
+        "humboldts",
+        "sich",
+        "hat",
+        "wurde",
+        "den",
+        "dem",
+        "des",
+        "wird",
+        "für",
+        "bei",
+        "nach",
+        "aus",
+        "oder",
+        "auch",
+        "noch",
+        "gibt",
+        "traf",
+    },
+    "en": {
+        "the",
+        "and",
+        "is",
+        "not",
+        "how",
+        "who",
+        "whom",
+        "where",
+        "what",
+        "which",
+        "when",
+        "with",
+        "about",
+        "of",
+        "on",
+        "a",
+        "to",
+        "show",
+        "draw",
+        "create",
+        "did",
+        "does",
+        "was",
+        "were",
+        "do",
+        "his",
+        "are",
+        "from",
+        "me",
+        "many",
+        "there",
+        "why",
+        "list",
+        "summarise",
+        "summarize",
+        "meet",
+        "met",
+        "write",
+        "writes",
+        "wrote",
+    },
+    "fr": {
+        "le",
+        "la",
+        "les",
+        "et",
+        "est",
+        "où",
+        "qui",
+        "que",
+        "quel",
+        "quelle",
+        "quels",
+        "quand",
+        "avec",
+        "sur",
+        "des",
+        "du",
+        "une",
+        "dans",
+        "montre",
+        "dessine",
+        "crée",
+        "pas",
+        "il",
+        "au",
+        "aux",
+        "comment",
+        "pourquoi",
+        "était",
+        "étaient",
+    },
+    "es": {
+        "el",
+        "los",
+        "las",
+        "y",
+        "es",
+        "dónde",
+        "quién",
+        "qué",
+        "cuál",
+        "cuáles",
+        "cuándo",
+        "con",
+        "sobre",
+        "del",
+        "una",
+        "un",
+        "en",
+        "muestra",
+        "dibuja",
+        "crea",
+        "por",
+        "cómo",
+        "se",
+        "al",
+        "para",
+        "estaba",
+        "fue",
+    },
+}
+WORD = re.compile(r"[\w']+", re.UNICODE)
+
+
+def detect_language(query: str, fallback: str) -> str:
+    """The language the question is written in, by function words; the
+    interface language when the question does not say."""
+    words = [word.lower() for word in WORD.findall(query)]
+    if not words:
+        return fallback
+    scores = {
+        language: sum(word in markers for word in words)
+        for language, markers in LANGUAGE_MARKERS.items()
+    }
+    best = max(scores, key=scores.get)
+    ranked = sorted(scores.values(), reverse=True)
+    if ranked[0] == 0 or ranked[0] == ranked[1]:
+        return fallback
+    return best
+
 
 SUGGESTIONS_SYSTEM = (
     "You suggest follow-up questions for a research assistant on the edition humboldt digital "
@@ -205,12 +402,18 @@ def system_prompt(
     )
 
 
-def context_note(language: str, wikipedia: bool) -> str:
+def context_note(language: str, wikipedia: bool, question_language: str = "") -> str:
     interface = "German" if language == "de" else "English"
     note = (
         f"The user's interface language is {interface}; use it when the language of the "
         "question itself is unclear."
     )
+    if question_language and question_language != language:
+        name = LANGUAGE_NAMES.get(question_language, question_language)
+        note += (
+            f" This question is written in {name}: answer entirely in {name}, including the "
+            "titles of maps, timelines, networks and charts."
+        )
     if wikipedia:
         note += (
             " The user switched on outside context: you may add brief background from "

@@ -384,7 +384,7 @@ def test_a_requested_map_that_was_not_created_is_asked_for_once(make_agent):
         suggestions=False,
     )
     events = list(agent.run("Zeichne eine Karte der Reise 1805.", TEST_MODEL))
-    assert any("visualisation" in note for note in provider.notes)
+    assert any("Visualisierung" in note for note in provider.notes)
     answer = events[-1]["answer"]
     assert len(answer["artifacts"]) == 1 and answer["artifacts"][0]["type"] == "map"
     assert answer["text"] == "Die Reise führte nach Berlin.\n\nDie Karte zeigt die Station."
@@ -402,7 +402,7 @@ def test_a_long_uncited_answer_is_written_again_with_citations(make_agent):
         suggestions=False,
     )
     events = list(agent.run("Was maß Humboldt?", TEST_MODEL))
-    assert any("no citations" in note for note in provider.notes)
+    assert any("keine Belege" in note for note in provider.notes)
     kinds = [event["type"] for event in events]
     assert kinds.count("reset") == 1
     answer = events[-1]["answer"]
@@ -416,3 +416,15 @@ def test_reminders_are_not_sent_without_cause(make_agent):
     )
     list(agent.run("Was schreibt Humboldt über den Vesuv?", TEST_MODEL))
     assert provider.notes == [""]
+
+
+def test_question_language_is_detected_and_passed_on(make_agent):
+    from alex.agent.prompts import context_note, detect_language
+
+    assert detect_language("Whom did Humboldt meet in Vienna in 1797?", "de") == "en"
+    assert detect_language("Wen traf Humboldt 1797 in Wien?", "en") == "de"
+    assert detect_language("Où était Humboldt en mars 1801 ?", "de") == "fr"
+    assert detect_language("Bonpland", "de") == "de"
+    assert "answer entirely in English" in context_note("de", False, "en")
+    assert "answer entirely" not in context_note("de", False, "de")
+    assert "Deutsch" in __import__("alex.agent.prompts", fromlist=["x"]).CITATION_REMINDER["de"]
