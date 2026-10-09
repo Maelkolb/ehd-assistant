@@ -56,6 +56,7 @@ class ModelSpec:
     output_price: float = 0.0
     cache_read_price: float = 0.0
     cache_write_price: float = 0.0
+    fallbacks: bool = True
 
     @property
     def compact(self) -> bool:
@@ -65,6 +66,18 @@ class ModelSpec:
 
 def anthropic_models(effort: str) -> list[ModelSpec]:
     return [
+        ModelSpec(
+            "claude-haiku-5-5",
+            "Claude Haiku 5.5",
+            "anthropic",
+            "fast",
+            effort,
+            input_price=0.10,
+            output_price=0.50,
+            cache_read_price=0.01,
+            cache_write_price=0.125,
+            fallbacks=False,
+        ),
         ModelSpec(
             "claude-sonnet-5-5",
             "Claude Sonnet 5.5",
@@ -168,7 +181,8 @@ def load_settings() -> Settings:
         )
     default_model = env("DEFAULT_MODEL")
     if default_model not in {spec.id for spec in models}:
-        default_model = models[0].id if models else ""
+        standard = next((spec for spec in models if spec.tier == "standard"), None)
+        default_model = standard.id if standard else (models[0].id if models else "")
 
     return Settings(
         data_dir=data_dir,
@@ -181,7 +195,7 @@ def load_settings() -> Settings:
         corpus_ref=env("CORPUS_REF", "main"),
         models=models,
         default_model=default_model,
-        utility_model=env("UTILITY_MODEL", "claude-haiku-4-5"),
+        utility_model=env("UTILITY_MODEL", "claude-haiku-5-5"),
         anthropic_fallbacks=env_flag("ANTHROPIC_FALLBACKS", True),
         local_base_url=env("LOCAL_LLM_BASE_URL"),
         local_api_key=env("LOCAL_LLM_API_KEY", "not-needed"),

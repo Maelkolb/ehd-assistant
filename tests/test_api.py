@@ -152,3 +152,22 @@ def test_premium_requests_fall_back_and_proxies_are_counted(make_agent):
     settings.daily_request_budget = 0
     with pytest.raises(Refusal):
         RateLimiter(settings).admit("other", standard)
+
+
+def test_haiku_is_offered_as_fast_tier_and_sonnet_stays_default(monkeypatch):
+    from alex.config import anthropic_models, load_settings
+
+    models = anthropic_models("medium")
+    haiku = next(spec for spec in models if spec.id == "claude-haiku-5-5")
+    assert haiku.tier == "fast" and haiku.fallbacks is False
+    assert next(spec for spec in models if spec.id == "claude-sonnet-5-5").fallbacks is True
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.delenv("DEFAULT_MODEL", raising=False)
+    settings = load_settings()
+    assert [spec.id for spec in settings.models][:3] == [
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
+    ]
+    assert settings.default_model == "claude-sonnet-5-5"
+    assert settings.fallback_for_premium.id == "claude-sonnet-5-5"

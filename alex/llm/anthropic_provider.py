@@ -268,7 +268,7 @@ class AnthropicProvider:
             history,
             query,
             max_tokens,
-            self.fallbacks,
+            self.fallbacks and spec.fallbacks,
         )
 
     def complete(self, system: str, prompt: str, max_tokens: int = 300) -> str:

@@ -16,6 +16,8 @@ Static facts the client needs before the first question.
              "entities": {"person": 9399, "place": 4749, "institution": 235,
                           "plant": 3292, "glossary": 245, "siglum": 41}},
   "models": [
+    {"id": "claude-haiku-5-5", "label": "Claude Haiku 5.5", "provider": "anthropic",
+     "tier": "fast", "default": false},
     {"id": "claude-sonnet-5-5", "label": "Claude Sonnet 5.5", "provider": "anthropic",
      "tier": "standard", "default": true},
     {"id": "claude-opus-5-5", "label": "Claude Opus 5.5", "provider": "anthropic",

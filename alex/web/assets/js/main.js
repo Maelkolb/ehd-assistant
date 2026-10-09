@@ -133,7 +133,8 @@ function setupModels() {
   const stored = store.get('alex.model');
   const chosen = models.find((model) => model.id === stored) || models.find((model) => model.default) || models[0];
   elements.model.replaceChildren(...models.map((model) => {
-    const hint = model.tier === 'premium' ? t('model.premium') : model.provider === 'local' ? t('model.local') : '';
+    const hint = model.tier === 'premium' ? t('model.premium') : model.tier === 'fast' ? t('model.fast')
+      : model.provider === 'local' ? t('model.local') : '';
     return h('option', { value: model.id, selected: chosen && model.id === chosen.id,
                          text: hint ? `${model.label} · ${hint}` : model.label });
   }));

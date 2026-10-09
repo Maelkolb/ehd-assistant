@@ -54,6 +54,13 @@ app = FastAPI(title="Alex mock API")
 
 MODELS = [
     {
+        "id": "claude-haiku-5-5",
+        "label": "Claude Haiku 5.5",
+        "provider": "anthropic",
+        "tier": "fast",
+        "default": False,
+    },
+    {
         "id": "claude-sonnet-5-5",
         "label": "Claude Sonnet 5.5",
         "provider": "anthropic",

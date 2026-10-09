@@ -33,14 +33,16 @@ provinces) stay off maps unless the model supplies coordinates.
 
 ### Claude
 
-Set `ANTHROPIC_API_KEY`. Alex offers Claude Sonnet 5.5 (default) and Claude
-Opus 5.5, both at `EFFORT=medium`. Opus is the premium tier: each client gets
-`RATE_LIMIT_PREMIUM_PER_HOUR` Opus answers per hour, further Opus requests are
-answered by Sonnet. `ANTHROPIC_MODELS=claude-sonnet-5-5` offers Sonnet only.
+Set `ANTHROPIC_API_KEY`. Alex offers Claude Haiku 5.5 (fast), Claude Sonnet 5.5
+(default) and Claude Opus 5.5, all at `EFFORT=medium`. Opus is the premium
+tier: each client gets `RATE_LIMIT_PREMIUM_PER_HOUR` Opus answers per hour,
+further Opus requests are answered by Sonnet. `ANTHROPIC_MODELS=claude-sonnet-5-5`
+offers Sonnet only; `DEFAULT_MODEL` changes the preselected model.
 
 A request the API's safety classifiers decline is re-run once on the fallback
 model Anthropic recommends (`ANTHROPIC_FALLBACKS=1`, the default; a beta
-feature of the API). Set it to `0` to disable.
+feature of the API). Set it to `0` to disable. Haiku has no server-side
+fallback; a declined Haiku request is reported as such.
 
 ### A local model
 

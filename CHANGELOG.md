@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.0 — 2026-10-09
+
+- Claude Haiku 5.5 joins the model menu as the fast tier (about a twentieth of
+  Sonnet's price); Sonnet stays the default, `DEFAULT_MODEL` changes that.
+  Haiku gets no server-side refusal fallback, which the API does not offer
+  for it. Follow-up suggestions now come from Haiku 5.5 as well.
+
 ## 2.2.0 — 2026-10-09
 
 **Agent**
