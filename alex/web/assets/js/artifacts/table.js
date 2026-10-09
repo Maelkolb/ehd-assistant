@@ -96,7 +96,7 @@ export function renderTable(artifact, body, foot) {
   body.append(sortableTable(columns, rows, artifact.links));
   foot.append(h('span', { class: 'table-count' },
     t('table.rows', { count: formatNumber(rows.length, getLanguage()) }),
-    artifact.truncated ? ` · ${t('table.truncated')}` : ''));
+    artifact.truncated ? `, ${t('table.truncated')}` : ''));
   return {
     downloadLabel: 'artifact.download.csv',
     download: () => download(`${slug(artifact.title || 'table')}.csv`, toCsv(columns, rows),

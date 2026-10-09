@@ -43,7 +43,7 @@ html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--in
 <main class="export">
 <h1>${escapeHtml(title)}</h1>
 <div class="artifact-body">${bodyHtml}</div>
-<p class="export-credit">${escapeHtml(t('artifact.credit'))} · ${new Date().toISOString().slice(0, 10)}</p>
+<p class="export-credit">${escapeHtml(t('artifact.credit'))}, ${new Date().toISOString().slice(0, 10)}</p>
 </main>
 ${script}
 </body>

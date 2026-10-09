@@ -47,9 +47,9 @@ export function summarizeInput(name, input = {}) {
   const quoted = (value) => `„${truncate(value, 80)}“`;
   switch (name) {
     case 'search':
-      return [quoted(pick(input, 'query') ?? ''), ...filters(input)].join(' · ');
+      return [quoted(pick(input, 'query') ?? ''), ...filters(input)].join(', ');
     case 'grep':
-      return [`/${truncate(pick(input, 'pattern') ?? '', 80)}/`, ...filters(input)].join(' · ');
+      return [`/${truncate(pick(input, 'pattern') ?? '', 80)}/`, ...filters(input)].join(', ');
     case 'read_document': {
       const parts = [String(pick(input, 'doc_id') ?? '')];
       const from = pick(input, 'page_from', 'from_page', 'page');
@@ -59,7 +59,7 @@ export function summarizeInput(name, input = {}) {
       if (section) parts.push(truncate(section, 40));
       const start = pick(input, 'start', 'offset');
       if (start !== undefined && !from) parts.push(`ab ${start}`);
-      return parts.join(' · ');
+      return parts.join(', ');
     }
     case 'list_documents': {
       const parts = filters(input);
@@ -67,14 +67,14 @@ export function summarizeInput(name, input = {}) {
       if (person) parts.push(String(person));
       const title = pick(input, 'title_contains', 'title');
       if (title) parts.push(quoted(title));
-      return parts.join(' · ');
+      return parts.join(', ');
     }
     case 'lookup_entity': {
       const kind = pick(input, 'kind', 'entity_type', 'type');
-      return quoted(pick(input, 'name', 'query') ?? '') + (kind ? ` · ${kindLabel(kind)}` : '');
+      return quoted(pick(input, 'name', 'query') ?? '') + (kind ? ` (${kindLabel(kind)})` : '');
     }
     case 'entity_mentions':
-      return [String(pick(input, 'entity_id', 'entity') ?? ''), ...filters(input)].join(' · ');
+      return [String(pick(input, 'entity_id', 'entity') ?? ''), ...filters(input)].join(', ');
     case 'chronology':
       return dateRange(input);
     case 'query_data':
@@ -85,18 +85,18 @@ export function summarizeInput(name, input = {}) {
       return truncate((lead || '').replace(/^#\s*/, ''), 90);
     }
     case 'create_map':
-      return `${quoted(pick(input, 'title') ?? '')} · ${asList(pick(input, 'stations')).length}`;
+      return `${quoted(pick(input, 'title') ?? '')} (${asList(pick(input, 'stations')).length})`;
     case 'create_timeline':
-      return `${quoted(pick(input, 'title') ?? '')} · ${asList(pick(input, 'events')).length}`;
+      return `${quoted(pick(input, 'title') ?? '')} (${asList(pick(input, 'events')).length})`;
     case 'create_network': {
       const nodes = asList(pick(input, 'nodes'));
       const focus = pick(input, 'focus', 'entity_id');
-      if (nodes.length) return `${quoted(pick(input, 'title') ?? '')} · ${nodes.length}`;
+      if (nodes.length) return `${quoted(pick(input, 'title') ?? '')} (${nodes.length})`;
       return focus ? quoted(focus) : quoted(pick(input, 'title') ?? '');
     }
     case 'dated_passages':
       return [dateRange(input), ...filters({ doc_types: pick(input, 'doc_types'), doc_id: pick(input, 'doc_id') })]
-        .filter(Boolean).join(' · ');
+        .filter(Boolean).join(', ');
     case 'entities_in_document': {
       const parts = [String(pick(input, 'doc_id') ?? '')];
       const from = pick(input, 'page_from');
@@ -104,7 +104,7 @@ export function summarizeInput(name, input = {}) {
       if (from) parts.push(to && to !== from ? `${from}–${to}` : String(from));
       const kinds = asList(pick(input, 'kinds'));
       if (kinds.length) parts.push(kinds.map(kindLabel).join(', '));
-      return parts.join(' · ');
+      return parts.join(', ');
     }
     case 'itinerary':
       return pick(input, 'doc_id') ? String(pick(input, 'doc_id')) : dateRange(input);
@@ -200,7 +200,7 @@ export class ActivityFeed {
     if (sources.length) {
       const list = h('ul', { class: 'step-sources' });
       for (const source of sources.slice(0, 8)) {
-        const label = [source.label, truncate(source.title || '', 46)].filter(Boolean).join(' · ');
+        const label = [source.label, truncate(source.title || '', 46)].filter(Boolean).join(', ');
         list.append(h('li', {}, h('button', {
           type: 'button', class: 'step-source', text: label || source.id,
           onClick: () => this.onSource(source),
@@ -232,7 +232,7 @@ export class ActivityFeed {
     if (this.result && this.result.elapsed !== undefined && this.result.elapsed !== null) {
       this.meta.textContent = t('activity.summary', {
         steps, seconds: Math.round(this.result.elapsed), model: this.result.model || '' })
-        .replace(/ · $/, '');
+        .replace(/, $/, '');
     } else {
       this.meta.textContent = count ? steps : '';
     }

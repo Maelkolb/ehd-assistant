@@ -96,7 +96,7 @@ export function showPreview(chip, source, reference) {
   const quote = (reference.citedTexts || []).find((text) => text && text.trim());
   const detail = [sourceKindText(source), source.doc_type ? source.label : '',
     ['letter', 'document'].includes(source.doc_type) && source.date ? formatDate(source.date) : '']
-    .filter(Boolean).join(' · ');
+    .filter(Boolean).join(', ');
   clear(preview);
   append(preview, [
     h('span', { class: 'cite-preview-title', text: truncate(source.title || source.label || '', 120) }),
@@ -365,7 +365,7 @@ export class TurnView {
             || 'panel.title');
       const dated = ['letter', 'document'].includes(source.doc_type) && source.date;
       const detail = [kindText, source.doc_type ? source.label : '', dated ? formatDate(source.date) : '']
-        .filter(Boolean).join(' · ');
+        .filter(Boolean).join(', ');
       return h('li', {}, h('button', { type: 'button', class: 'source-row',
                                        onClick: () => this.openSource(source, { citedTexts: quotes, inNote }) },
         h('span', { class: 'source-number', text: String(source.n ?? '') }),

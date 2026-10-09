@@ -164,7 +164,7 @@ export class SourcePanel {
     const page = pageLabel || source.page;
     const dated = docType === 'letter' || docType === 'document';
     const meta = [page ? t('panel.page', { page }) : '', dated ? dateText : '']
-      .filter(Boolean).join(' · ');
+      .filter(Boolean).join(', ');
     this.setHeader(badge(docTypeLabel(docType), DOCTYPE_SLOTS[docType]), title, meta);
   }
 
@@ -300,7 +300,7 @@ export class SourcePanel {
       entity.description ? h('p', { class: 'entity-description', text: entity.description }) : null,
       (entity.alternative_names || []).length ? h('p', { class: 'entity-also' },
         h('span', { class: 'label', 'data-i18n': 'panel.register.also', text: t('panel.register.also') }),
-        ' ', entity.alternative_names.slice(0, 12).join(' · ')) : null,
+        ' ', entity.alternative_names.slice(0, 12).join('; ')) : null,
       Number.isFinite(entity.lat) && Number.isFinite(entity.lon) ? h('p', { class: 'entity-also' },
         h('span', { class: 'label', 'data-i18n': 'panel.register.coordinates', text: t('panel.register.coordinates') }),
         ` ${entity.lat.toFixed(3)}, ${entity.lon.toFixed(3)}`) : null,

@@ -2,6 +2,8 @@
 
 ## 2.3.0 — 2026-10-09
 
+- The interface no longer uses the middle dot as a separator: model hints stand in
+  parentheses, source details and the research summary are comma-separated.
 - Claude Haiku 5.5 joins the model menu as the fast tier (about a twentieth of
   Sonnet's price); Sonnet stays the default, `DEFAULT_MODEL` changes that.
   Haiku gets no server-side refusal fallback, which the API does not offer

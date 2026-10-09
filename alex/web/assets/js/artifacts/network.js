@@ -257,7 +257,7 @@ export function mountNetwork(wrap, graph, style) {
     canvas.style.cursor = hover ? (hover.url ? 'pointer' : 'grab') : 'default';
     if (hover) {
       const kind = style.kindLabels[hover.kind] || hover.kind || '';
-      const lines = [hover.label, hover.focus ? kind : `${kind} · ${hover.weight ?? ''}`.replace(/ · $/, '')];
+      const lines = [hover.label, hover.focus ? kind : `${kind} ${hover.weight ?? ''}`.replace(/ $/, '')];
       if (hover.description) lines.push(hover.description);
       showTip(lines, x, y);
     } else if (hoverEdge) {

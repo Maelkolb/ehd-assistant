@@ -91,7 +91,7 @@ function renderWelcome() {
       }))))),
     version ? h('p', { class: 'welcome-corpus' },
       h('span', { text: t('welcome.corpus', { version }) }),
-      facts.length ? h('span', { class: 'welcome-facts', text: facts.join(' · ') }) : null) : null,
+      facts.length ? h('span', { class: 'welcome-facts', text: facts.join(', ') }) : null) : null,
   ]);
 }
 
@@ -136,7 +136,7 @@ function setupModels() {
     const hint = model.tier === 'premium' ? t('model.premium') : model.tier === 'fast' ? t('model.fast')
       : model.provider === 'local' ? t('model.local') : '';
     return h('option', { value: model.id, selected: chosen && model.id === chosen.id,
-                         text: hint ? `${model.label} · ${hint}` : model.label });
+                         text: hint ? `${model.label} (${hint})` : model.label });
   }));
   elements.modelOption.hidden = models.length < 2;
   elements.question.maxLength = config.limits?.max_query_chars || 2000;
@@ -289,7 +289,7 @@ function renderAbout() {
     section('about.ai.title', t('about.ai.body'),
       (config.models || []).length ? h('p', { class: 'about-models' },
         h('span', { class: 'label', text: `${t('about.models')}: ` }),
-        config.models.map((model) => model.label).join(' · ')) : null),
+        config.models.map((model) => model.label).join(', ')) : null),
     section('about.privacy.title', t('about.privacy.body')),
     h('p', { class: 'about-links' },
       link(links.edition, 'about.links.edition'),
